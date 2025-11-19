@@ -21,25 +21,60 @@ services:
   # Bot application
   bot:
     build: .
+    env_file:
+      - .env
     environment:
+      # Telegram API credentials
       TELEGRAM_API_ID: ${TELEGRAM_API_ID}
       TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
       TELEGRAM_PHONE: ${TELEGRAM_PHONE}
-      SUPABASE_URL: postgresql://postgres:postgres@postgres:5432/userbot_orders
-      SUPABASE_USER: postgres
-      SUPABASE_PASSWORD: postgres
-      SUPABASE_HOST: postgres
-      SUPABASE_PORT: 5432
-      SUPABASE_DB: userbot_orders
-      LLM_API_KEY: ${LLM_API_KEY}
+      TELEGRAM_PASSWORD: ${TELEGRAM_PASSWORD:-}
+      
+      # Supabase REST API (для локальной разработки используем локальный PostgreSQL)
+      SUPABASE_URL: ${SUPABASE_URL:-http://postgres:5432}
+      SUPABASE_KEY: ${SUPABASE_KEY:-postgres}
+      
+      # Supabase PostgreSQL direct connection (локальный PostgreSQL для разработки)
+      SUPABASE_USER: ${SUPABASE_USER:-postgres}
+      SUPABASE_PASSWORD: ${SUPABASE_PASSWORD:-postgres}
+      SUPABASE_HOST: ${SUPABASE_HOST:-postgres}
+      SUPABASE_PORT: ${SUPABASE_PORT:-5432}
+      SUPABASE_DB: ${SUPABASE_DB:-userbot_orders}
+      
+      # Database settings
+      DATABASE_ECHO: ${DATABASE_ECHO:-false}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      
+      # LLM configuration
+      LLM_PROVIDER: ${LLM_PROVIDER:-proxyapi}
       LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      LLM_API_KEY: ${LLM_API_KEY}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.proxyapi.ru/openai/v1}
+      LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.3}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-512}
+      LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-3}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-30}
+      LLM_BATCH_SIZE: ${LLM_BATCH_SIZE:-10}
+      LLM_DAILY_BUDGET_USD: ${LLM_DAILY_BUDGET_USD:-10.0}
+      LLM_ANALYSIS_THRESHOLD: ${LLM_ANALYSIS_THRESHOLD:-0.5}
+      LLM_ENABLE_CACHING: ${LLM_ENABLE_CACHING:-true}
+      LLM_CACHE_TTL_SECONDS: ${LLM_CACHE_TTL_SECONDS:-3600}
+      
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
-      - .:/app
+      # Монтируем только необходимые директории для разработки
+      - ./src:/app/src:ro
+      - ./config:/app/config:rw
+      - ./data:/app/data:rw
+      - ./logs:/app/logs:rw
+      - ./exports:/app/exports:rw
     networks:
       - default
+    restart: unless-stopped
 
 volumes:
   postgres_data:

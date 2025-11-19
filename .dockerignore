@@ -1,0 +1,90 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+
+# Data directories (будут созданы в контейнере)
+data/
+exports/
+
+# Pyrogram session files
+*.session
+*.session-journal
+
+# Documentation
+*.md
+!README.md
+
+# Scripts (не нужны в production образе)
+scripts/
+tests/
+
+# Docker files (не нужны внутри образа)
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Migration files (не нужны в runtime)
+*.sql
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+.pytest_cache/
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+

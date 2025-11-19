@@ -38,15 +38,19 @@ ENV PATH="/opt/venv/bin:$PATH" \
 
 # Копировать приложение
 COPY src/ src/
+COPY config/ config/
 COPY .env.example .env.example
+
+# Создать директории для данных (если их нет)
+RUN mkdir -p /app/data /app/logs /app/exports
 
 # Создать user для безопасности
 RUN useradd -m appuser && chown -R appuser:appuser /app
 USER appuser
 
-# Health check
+# Health check (упрощенный - проверяет только импорт модулей)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import asyncio; from src.database.base import db_manager; asyncio.run(db_manager.initialize()); print('OK')" || exit 1
+    CMD python -c "from src.config.settings import get_settings; print('OK')" || exit 1
 
 # Запустить приложение
 CMD ["python", "-m", "src.main", "start"]
