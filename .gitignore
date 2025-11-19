@@ -47,6 +47,10 @@ logs/
 *.db
 *.sqlite
 
+# Pyrogram session files
+*.session
+*.session-journal
+
 # OS
 .DS_Store
 Thumbs.db

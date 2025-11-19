@@ -29,6 +29,12 @@ pip install -r requirements.txt
 
 ### Настройка окружения / Environment Setup
 
+**⚠️ ВАЖНО: Безопасность / IMPORTANT: Security**
+
+Файл `.env` содержит конфиденциальные данные и **НИКОГДА** не должен быть закоммичен в git. Он автоматически игнорируется через `.gitignore`. Используйте только `.env.example` как шаблон.
+
+The `.env` file contains sensitive credentials and should **NEVER** be committed to git. It is automatically ignored via `.gitignore`. Use only `.env.example` as a template.
+
 1. Скопируйте `.env.example` в `.env`:
 ```bash
 cp .env.example .env
@@ -50,9 +56,47 @@ python -m src.config.settings
 # Проверка логирования
 python -m src.utils.logger
 
+# Проверка подключения к Supabase
+python -m src.database.base
+
 # Запуск тестов
 pytest
 ```
+
+### Запуск Telegram Userbot / Running Telegram Userbot
+
+**Важно:** Перед первым запуском убедитесь, что в `.env` файле указаны все необходимые Telegram credentials.
+
+**Important:** Before first run, make sure all Telegram credentials are set in `.env` file.
+
+1. **Первый запуск / First Run:**
+```bash
+python -m src.main
+```
+
+При первом запуске Pyrogram запросит код подтверждения из Telegram:
+- Введите код, который придет в Telegram
+- Если включена 2FA, введите пароль (или укажите его в `.env` как `TELEGRAM_PASSWORD`)
+
+2. **Авторизация / Authentication:**
+- Код подтверждения будет отправлен в Telegram
+- Введите код в терминал
+- Сессия сохранится в файл `userbot_session.session`
+
+3. **Мониторинг сообщений / Message Monitoring:**
+После успешной авторизации userbot начнет логировать все новые сообщения в формате:
+```
+[INFO] New Telegram message: 'Текст сообщения' | Author: username (user_id) | Chat: Chat Name (chat_id) | Time: 2025-11-19 13:20
+```
+
+4. **Остановка / Stopping:**
+- Нажмите `Ctrl+C` для корректной остановки
+- Userbot завершит работу и закроет соединение
+
+**Примечания / Notes:**
+- Файл сессии `userbot_session.session` создается автоматически
+- Не удаляйте файл сессии, иначе потребуется повторная авторизация
+- Для работы userbot должен быть добавлен в каналы/группы, которые нужно мониторить
 
 ### Структура проекта / Project Structure
 
