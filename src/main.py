@@ -123,9 +123,11 @@ class UserbotApp:
             
             # Analyze message with regex analyzer (first level filter)
             detection_result = self.regex_analyzer.analyze(message_text)
-            if detection_result:
+            
+            # If regex found high-confidence match, use it directly
+            if detection_result and detection_result.confidence >= 0.80:
                 logger.info(
-                    f"  ✓ Order detected: {detection_result.category.value} "
+                    f"  ✓ Order detected (regex): {detection_result.category.value} "
                     f"(confidence: {detection_result.confidence:.2f}, "
                     f"pattern: {detection_result.matched_pattern})"
                 )
@@ -172,7 +174,7 @@ class UserbotApp:
                                 # Update statistics
                                 await stat_repo.update_metrics(
                                     detected_orders=1,
-                                    regex_detections=1 if detection_result.detected_by.value == "regex" else 0,
+                                    regex_detections=1,
                                 )
                                 
                                 logger.info(f"  ✓ Order saved to database")
@@ -181,8 +183,79 @@ class UserbotApp:
                                 break
                     except Exception as e:
                         logger.error(f"Error saving order to database: {e}", exc_info=True)
-            else:
-                logger.debug("  No order detected by regex")
+            
+            # Level 2: LLM analysis for ambiguous messages
+            # Use LLM if regex didn't find anything OR found low-confidence match
+            elif not detection_result or detection_result.confidence < 0.80:
+                # Only analyze messages that are long enough and might be orders
+                if len(message_text.strip()) > 20:  # Skip very short messages
+                    try:
+                        from src.analysis.llm_classifier import llm_classifier
+                        
+                        logger.debug("  → Sending to LLM for analysis (ambiguous or no regex match)")
+                        llm_result = await llm_classifier.classify(message_text)
+                        
+                        if llm_result and llm_result.is_order and llm_result.relevance_score >= llm_classifier.threshold:
+                            logger.info(
+                                f"  ✓ Order detected (LLM): {llm_result.category} "
+                                f"(confidence: {llm_result.relevance_score:.2f})"
+                            )
+                            logger.debug(f"  LLM reason: {llm_result.reason}")
+                            
+                            # Save order to database if DB is initialized
+                            if self.db_initialized:
+                                try:
+                                    async for session in db_manager.get_session():
+                                        try:
+                                            order_repo = OrderRepository(session)
+                                            stat_repo = StatRepository(session)
+                                            
+                                            # Build telegram link
+                                            telegram_link = None
+                                            try:
+                                                if hasattr(message.chat, 'username') and message.chat.username:
+                                                    telegram_link = f"https://t.me/{message.chat.username}/{message.id}"
+                                                elif message.chat.id < 0:
+                                                    chat_id_str = str(abs(message.chat.id))
+                                                    if len(chat_id_str) > 4:
+                                                        telegram_link = f"https://t.me/c/{chat_id_str[4:]}/{message.id}"
+                                                    else:
+                                                        telegram_link = f"https://t.me/c/{chat_id_str}/{message.id}"
+                                            except Exception as link_error:
+                                                logger.debug(f"Could not build telegram link: {link_error}")
+                                            
+                                            # Save order
+                                            await order_repo.create(
+                                                message_id=str(message.id),
+                                                chat_id=str(chat_id),
+                                                author_id=str(author_id) if author_id else "unknown",
+                                                author_name=author_username[:255] if author_username else None,
+                                                text=message_text[:10000] if len(message_text) > 10000 else message_text,
+                                                category=llm_result.category,
+                                                relevance_score=llm_result.relevance_score,
+                                                detected_by="llm",
+                                                telegram_link=telegram_link[:500] if telegram_link else None,
+                                            )
+                                            
+                                            # Update statistics
+                                            await stat_repo.update_metrics(
+                                                detected_orders=1,
+                                                llm_detections=1,
+                                                llm_tokens_used=llm_result.tokens_used or 0,
+                                                llm_cost=llm_result.cost_usd or 0.0,
+                                            )
+                                            
+                                            logger.info(f"  ✓ Order saved to database (LLM)")
+                                        finally:
+                                            break
+                                except Exception as e:
+                                    logger.error(f"Error saving LLM order to database: {e}", exc_info=True)
+                        else:
+                            logger.debug(f"  LLM analysis: not an order (confidence: {llm_result.relevance_score if llm_result else 'N/A'})")
+                    except Exception as e:
+                        logger.error(f"Error in LLM classification: {e}", exc_info=True)
+                else:
+                    logger.debug("  Message too short for LLM analysis")
             
             # Log additional metadata if available
             if message.forward_from_chat:

@@ -35,10 +35,26 @@ class Settings(BaseSettings):
     database_echo: bool = Field(default=False, description="Echo SQL queries")
     environment: str = Field(default="development", description="Environment (development, production, test)")
     
-    # LLM configuration
+    # LLM configuration (ProxyAPI)
     llm_provider: str = Field(default="proxyapi", description="LLM provider name")
     llm_model: str = Field(default="gpt-4o-mini", description="LLM model name")
     llm_api_key: str = Field(..., description="LLM API key")
+    llm_base_url: str = Field(default="https://api.proxyapi.ru/openai/v1", description="LLM API base URL")
+    
+    # LLM Behavior
+    llm_temperature: float = Field(default=0.3, description="LLM temperature (0.0-1.0)")
+    llm_max_tokens: int = Field(default=512, description="Maximum tokens per request")
+    llm_max_retries: int = Field(default=3, description="Maximum retry attempts")
+    llm_timeout_seconds: int = Field(default=30, description="Request timeout in seconds")
+    llm_batch_size: int = Field(default=10, description="Batch size for batch processing")
+    
+    # LLM Budgeting
+    llm_daily_budget_usd: float = Field(default=10.0, description="Daily budget limit in USD")
+    llm_analysis_threshold: float = Field(default=0.5, description="Minimum confidence for saving to DB")
+    
+    # LLM Performance
+    llm_enable_caching: bool = Field(default=True, description="Enable response caching")
+    llm_cache_ttl_seconds: int = Field(default=3600, description="Cache TTL in seconds")
     
     # Logging
     log_level: str = Field(default="INFO", description="Logging level")
