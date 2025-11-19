@@ -1,0 +1,2 @@
+"""Order analysis module."""
+
