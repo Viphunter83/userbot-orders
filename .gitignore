@@ -43,6 +43,8 @@ ENV/
 # Project specific
 data/
 logs/
+exports/
+test_exports/
 *.log
 *.db
 *.sqlite

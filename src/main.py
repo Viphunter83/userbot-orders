@@ -4,8 +4,10 @@ import asyncio
 import signal
 from datetime import datetime
 from typing import Optional
+from pathlib import Path
 from pyrogram.types import Message
 from loguru import logger
+import typer
 
 from src.telegram.client import TelegramClient
 from src.utils.logger import setup_logger
@@ -13,6 +15,19 @@ from src.config.settings import get_settings
 from src.analysis.regex_analyzer import RegexAnalyzer
 from src.database.base import db_manager
 from src.database.repository import ChatRepository, MessageRepository, OrderRepository, StatRepository
+from src.export.csv_exporter import CSVExporter
+from src.export.html_exporter import HTMLExporter
+from src.export.filters import ExportFilter, OrderFilter, create_filter_for_period
+from src.stats.dashboard import Dashboard
+from src.stats.reporter import MetricsReporter
+from src.stats.metrics import MetricsCalculator
+
+# Create Typer app
+app = typer.Typer(help="Telegram Userbot for Order Monitoring")
+export_app = typer.Typer(help="Export commands")
+stats_app = typer.Typer(help="Stats and analytics commands")
+app.add_typer(export_app, name="export")
+app.add_typer(stats_app, name="stats")
 
 
 class UserbotApp:
@@ -350,17 +365,206 @@ class UserbotApp:
         logger.info("✓ Userbot stopped")
 
 
-async def main():
-    """Main async entry point."""
-    app = UserbotApp()
-    await app.start()
+@export_app.command()
+def csv(
+    period: str = typer.Option("today", help="Period: today, week, month, all"),
+    category: str = typer.Option("", help="Filter by category (Backend, Frontend, ...)"),
+    output_dir: str = typer.Option("./exports", help="Output directory"),
+):
+    """Экспортировать заказы в CSV."""
+    async def _export():
+        # Получить заказы из БД
+        await db_manager.initialize()
+        
+        async for session in db_manager.get_session():
+            try:
+                repo = OrderRepository(session)
+                
+                # Создать фильтр
+                filter_params = create_filter_for_period(period)
+                if category:
+                    filter_params.categories = [category]
+                
+                # Получить заказы
+                orders = await repo.get_recent(days=365)  # Получить все
+                filtered = OrderFilter.apply(orders, filter_params)
+                
+                # Экспортировать
+                exporter = CSVExporter(export_dir=output_dir)
+                path = exporter.export(filtered)
+                
+                typer.echo(f"✓ Exported {len(filtered)} orders to: {path}")
+            finally:
+                break
+        
+        await db_manager.close()
+    
+    asyncio.run(_export())
 
 
-if __name__ == "__main__":
+@export_app.command()
+def html(
+    period: str = typer.Option("week", help="Period: today, week, month, all"),
+    category: str = typer.Option("", help="Filter by category"),
+    output_dir: str = typer.Option("./exports", help="Output directory"),
+):
+    """Экспортировать заказы в интерактивную HTML таблицу."""
+    async def _export():
+        await db_manager.initialize()
+        
+        async for session in db_manager.get_session():
+            try:
+                repo = OrderRepository(session)
+                
+                filter_params = create_filter_for_period(period)
+                if category:
+                    filter_params.categories = [category]
+                
+                orders = await repo.get_recent(days=365)
+                filtered = OrderFilter.apply(orders, filter_params)
+                
+                exporter = HTMLExporter(export_dir=output_dir)
+                path = exporter.export(filtered)
+                
+                typer.echo(f"✓ Exported {len(filtered)} orders to: {path}")
+                typer.echo(f"✓ Open in browser: file://{path.absolute()}")
+            finally:
+                break
+        
+        await db_manager.close()
+    
+    asyncio.run(_export())
+
+
+@app.command()
+def start():
+    """Запустить Telegram userbot."""
+    async def _start():
+        userbot_app = UserbotApp()
+        await userbot_app.start()
+    
     try:
-        asyncio.run(main())
+        asyncio.run(_start())
     except KeyboardInterrupt:
         logger.info("Application interrupted by user")
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
+
+
+async def main():
+    """Main async entry point."""
+    userbot_app = UserbotApp()
+    await userbot_app.start()
+
+
+@stats_app.command()
+def dashboard(
+    period: str = typer.Option("week", help="Period: week, month, all"),
+):
+    """Показать dashboard с метриками."""
+    async def _show_dashboard():
+        # Получить заказы
+        await db_manager.initialize()
+        
+        async for session in db_manager.get_session():
+            try:
+                repo = OrderRepository(session)
+                
+                if period == "week":
+                    orders = await repo.get_recent(days=7)
+                elif period == "month":
+                    orders = await repo.get_recent(days=30)
+                else:
+                    orders = await repo.get_recent(days=365)
+                
+                # Показать dashboard
+                Dashboard.print_full_dashboard(orders, period)
+            finally:
+                break
+        
+        await db_manager.close()
+    
+    asyncio.run(_show_dashboard())
+
+
+@stats_app.command()
+def export(
+    period: str = typer.Option("week", help="Period: week, month, all"),
+    output_dir: str = typer.Option("./exports", help="Output directory"),
+):
+    """Экспортировать метрики в CSV."""
+    async def _export_stats():
+        await db_manager.initialize()
+        
+        async for session in db_manager.get_session():
+            try:
+                repo = OrderRepository(session)
+                
+                # Получить заказы
+                if period == "week":
+                    orders = await repo.get_recent(days=7)
+                elif period == "month":
+                    orders = await repo.get_recent(days=30)
+                else:
+                    orders = await repo.get_recent(days=365)
+                
+                # Экспортировать
+                reporter = MetricsReporter(export_dir=output_dir)
+                
+                # Daily metrics
+                period_metrics = MetricsCalculator.calculate_period_metrics(orders, period)
+                daily_path = reporter.export_daily_metrics_csv(period_metrics)
+                
+                # Category metrics
+                category_metrics = MetricsCalculator.calculate_category_metrics(orders)
+                category_path = reporter.export_category_metrics_csv(category_metrics)
+                
+                typer.echo(f"✓ Daily metrics exported to: {daily_path}")
+                typer.echo(f"✓ Category metrics exported to: {category_path}")
+            finally:
+                break
+        
+        await db_manager.close()
+    
+    asyncio.run(_export_stats())
+
+
+@stats_app.command()
+def summary(
+    period: str = typer.Option("week", help="Period: week, month, all"),
+):
+    """Показать сводный отчет."""
+    async def _show_summary():
+        await db_manager.initialize()
+        
+        async for session in db_manager.get_session():
+            try:
+                repo = OrderRepository(session)
+                
+                # Получить заказы
+                if period == "week":
+                    orders = await repo.get_recent(days=7)
+                elif period == "month":
+                    orders = await repo.get_recent(days=30)
+                else:
+                    orders = await repo.get_recent(days=365)
+                
+                # Генерировать отчет
+                reporter = MetricsReporter()
+                summary = reporter.generate_summary_report(orders, period)
+                
+                # Печать
+                import json
+                typer.echo(json.dumps(summary, indent=2, ensure_ascii=False))
+            finally:
+                break
+        
+        await db_manager.close()
+    
+    asyncio.run(_show_summary())
+
+
+if __name__ == "__main__":
+    # If run directly, use Typer CLI
+    app()
 
