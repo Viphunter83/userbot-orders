@@ -58,17 +58,50 @@ class DatabaseManager:
             )
             return
         
+        # Определить правильный формат хоста и пользователя
+        # Supabase использует разные форматы для direct и pooler подключений
+        host = settings.supabase_host
+        user = settings.supabase_user
+        
+        # Если используется pooler, формат пользователя: postgres.[PROJECT_REF]
+        # Извлекаем project_ref из URL или хоста
+        project_ref = None
+        if "supabase.co" in settings.supabase_url:
+            project_ref = settings.supabase_url.split("//")[1].split(".")[0]
+        
+        # Если хост содержит pooler, используем формат postgres.[PROJECT_REF]
+        if "pooler" in host.lower() and project_ref:
+            user = f"postgres.{project_ref}"
+            logger.debug(f"Using pooler connection format: user={user}, host={host}")
+        
+        # Построить DSN с поддержкой SSL
+        # Supabase требует SSL для всех подключений
         db_url = (
             f"postgresql+asyncpg://"
-            f"{settings.supabase_user}:"
+            f"{user}:"
             f"{settings.supabase_password}@"
-            f"{settings.supabase_host}:"
+            f"{host}:"
             f"{settings.supabase_port}/"
             f"{settings.supabase_db}"
         )
         
+        # Параметры подключения для asyncpg с SSL
+        # Для transaction mode pooler нужно отключить prepared statements
+        connect_args = {
+            "ssl": "require",  # Требовать SSL соединение
+            "server_settings": {
+                "application_name": "userbot-orders",
+            },
+            "command_timeout": 30,  # Таймаут команд
+        }
+        
+        # Transaction mode pooler (порт 6543) не поддерживает prepared statements
+        if settings.supabase_port == 6543:
+            connect_args["prepared_statement_cache_size"] = 0
+            logger.debug("Transaction mode pooler detected: disabling prepared statements")
+        
         try:
-            # Создать async engine с оптимальными настройками
+            # Создать async engine с оптимальными настройками и SSL
             self._engine = create_async_engine(
                 db_url,
                 echo=settings.database_echo,  # Логирование SQL запросов
@@ -78,6 +111,7 @@ class DatabaseManager:
                 pool_recycle=3600,  # Переиспользовать соединения каждый час
                 # Использовать QueuePool для production, NullPool для тестов
                 poolclass=NullPool if settings.environment == "test" else QueuePool,
+                connect_args=connect_args,  # SSL и другие параметры подключения
             )
             
             # Создать session factory

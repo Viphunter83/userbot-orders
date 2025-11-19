@@ -20,7 +20,7 @@ class Dashboard:
     @staticmethod
     def print_header(title: str, subtitle: str = ""):
         """Печать заголовка dashboard."""
-        console.clear()
+        # Не очищаем экран, чтобы не терять вывод в некоторых терминалах
         console.print(f"\n📊 {title}", style="bold cyan", justify="center")
         if subtitle:
             console.print(f"   {subtitle}", style="dim", justify="center")
@@ -135,6 +135,27 @@ class Dashboard:
         """Печать полного dashboard."""
         Dashboard.print_header("Telegram Orders Monitoring System", "Real-time Analytics")
         
+        # Проверка на пустые данные
+        if not orders:
+            period_display = {
+                "today": "сегодня",
+                "week": "неделю",
+                "month": "месяц",
+                "all": "всё время"
+            }.get(period, period)
+            
+            console.print(f"\n[yellow]⚠️  Нет данных за {period_display}[/]")
+            console.print("\n[dim]Возможные причины:[/]")
+            console.print("  • Userbot еще не обработал сообщения")
+            console.print("  • Нет активных чатов в мониторинге")
+            console.print("  • Заказы не были обнаружены")
+            console.print("\n[cyan]💡 Рекомендации:[/]")
+            console.print("  • Проверьте: [bold]python3 -m src.main chat list[/]")
+            console.print("  • Проверьте работу userbot: [bold]python3 -m src.main start[/]")
+            console.print("  • Попробуйте другой период: [bold]--period week[/] или [bold]--period all[/]")
+            console.print()
+            return
+        
         # Расчитать метрики
         period_metrics = MetricsCalculator.calculate_period_metrics(orders, period)
         category_metrics = MetricsCalculator.calculate_category_metrics(orders)
@@ -144,18 +165,21 @@ class Dashboard:
         Dashboard.print_period_metrics(period_metrics)
         console.print()
         
-        # Печать по категориям
-        Dashboard.print_category_breakdown(category_metrics)
-        console.print()
+        # Печать по категориям (только если есть категории)
+        if category_metrics:
+            Dashboard.print_category_breakdown(category_metrics)
+            console.print()
         
         # Печать топ элементов
         top_cats = MetricsCalculator.get_top_categories(orders, limit=5)
-        Dashboard.print_top_items(top_cats, "🏆 Top Categories")
-        console.print()
+        if top_cats:
+            Dashboard.print_top_items(top_cats, "🏆 Top Categories")
+            console.print()
         
         top_authors = MetricsCalculator.get_top_authors(orders, limit=8)
-        Dashboard.print_top_items(top_authors, "👥 Top Order Authors")
-        console.print()
+        if top_authors:
+            Dashboard.print_top_items(top_authors, "👥 Top Order Authors")
+            console.print()
         
         # Статус здоровья
         Dashboard.print_health_status(period_metrics, total_cost)

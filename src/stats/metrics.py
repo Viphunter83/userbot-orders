@@ -179,7 +179,9 @@ class MetricsCalculator:
             end_date = datetime.utcnow()
         
         if start_date is None:
-            if period_name == "week":
+            if period_name == "today":
+                start_date = end_date.replace(hour=0, minute=0, second=0, microsecond=0)
+            elif period_name == "week":
                 start_date = end_date - timedelta(days=7)
             elif period_name == "month":
                 start_date = end_date - timedelta(days=30)

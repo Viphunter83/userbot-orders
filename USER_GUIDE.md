@@ -17,22 +17,27 @@ python3 -m src.main start
 
 #### Просмотр dashboard (красивый вывод в терминале)
 ```bash
-python3 -m src.main stats dashboard --period week
+python3 -m src.main stats dashboard --period today
 ```
-- `--period`: `week`, `month`, или `all`
+- `--period`: `today`, `week`, `month`, или `all` (по умолчанию: `week`)
 - Показывает метрики, топ категории, топ авторов, статус системы
+- Используйте `today` для просмотра данных за сегодняшний день
 
 #### Экспорт метрик в CSV
 ```bash
-python3 -m src.main stats export --period week
+python3 -m src.main stats export --period today
 ```
+- `--period`: `today`, `week`, `month`, или `all` (по умолчанию: `week`)
 - Создает файлы: `metrics_daily_*.csv` и `metrics_categories_*.csv`
 - Сохраняется в `./exports/`
+- Используйте `today` для экспорта метрик за сегодняшний день
 
 #### Сводный отчет (JSON)
 ```bash
-python3 -m src.main stats summary --period month
+python3 -m src.main stats summary --period today
 ```
+- `--period`: `today`, `week`, `month`, или `all` (по умолчанию: `week`)
+- Используйте `today` для сводки за сегодняшний день
 
 ---
 
@@ -50,6 +55,9 @@ python3 -m src.main export csv --period week --category Backend
 ```bash
 python3 -m src.main export html --period week
 ```
+- `--period`: `today`, `week`, `month`, `all` (по умолчанию: `week`)
+- `--category`: опционально, фильтр по категории
+- `--output-dir`: директория для сохранения (по умолчанию `./exports/`)
 - Создает интерактивный HTML файл с фильтрами и сортировкой
 - Открой файл в браузере для просмотра
 
@@ -145,10 +153,12 @@ python3 -m src.main admin test-connection
 ## 📁 Где хранятся данные
 
 ### База данных (Supabase)
-- **Сообщения**: таблица `userbot_messages`
+- **Сообщения**: таблица `messages`
 - **Заказы**: таблица `userbot_orders`
-- **Статистика**: таблица `userbot_stats`
-- **Чаты**: таблица `userbot_chats`
+- **Статистика**: таблица `stats`
+- **Чаты**: таблица `chats`
+- **Статистика по чатам**: таблица `chat_stats`
+- **Обратная связь**: таблица `feedback`
 
 ### Локальные файлы
 - **Экспорты**: `./exports/`
@@ -164,13 +174,16 @@ python3 -m src.main admin test-connection
 ### Ежедневная проверка
 ```bash
 # 1. Посмотреть dashboard за сегодня
-python3 -m src.main stats dashboard --period week
+python3 -m src.main stats dashboard --period today
 
 # 2. Экспортировать заказы за сегодня
 python3 -m src.main export csv --period today
 
-# 3. Посмотреть сводку
-python3 -m src.main stats summary --period week
+# 3. Посмотреть сводку за сегодня
+python3 -m src.main stats summary --period today
+
+# 4. Экспортировать метрики за сегодня
+python3 -m src.main stats export --period today
 ```
 
 ### Еженедельный отчет
@@ -251,9 +264,12 @@ python3 -m src.main chat add -1001234567890 --name "Новый чат" --priorit
 2. Выбери проект
 3. Перейди в **Table Editor**
 4. Просматривай таблицы:
-   - `userbot_messages` - все сообщения
+   - `messages` - все сообщения
    - `userbot_orders` - обнаруженные заказы
-   - `userbot_stats` - статистика
+   - `stats` - ежедневная статистика
+   - `chats` - отслеживаемые чаты
+   - `chat_stats` - статистика по каждому чату
+   - `feedback` - обратная связь по заказам
 
 ### Через SQL запросы
 ```sql
@@ -321,9 +337,9 @@ python3 -m src.main stats dashboard --period week
 python3 -m src.main --help
 
 # Статистика
-python3 -m src.main stats dashboard --period week
-python3 -m src.main stats export --period week
-python3 -m src.main stats summary --period month
+python3 -m src.main stats dashboard --period today  # или week, month, all
+python3 -m src.main stats export --period today     # или week, month, all
+python3 -m src.main stats summary --period today     # или week, month, all
 
 # Экспорт
 python3 -m src.main export csv --period week

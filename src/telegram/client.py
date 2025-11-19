@@ -168,8 +168,8 @@ class TelegramClient:
                     logger.debug(f"Skipping message from self")
                     return
                 
-                # Skip empty messages
-                if not message.text:
+                # Skip empty messages (check both text and caption)
+                if not message.text and not message.caption:
                     logger.debug(f"Skipping empty message from chat {chat_id}")
                     return
                 
@@ -236,8 +236,8 @@ class TelegramClient:
         logger.info("   This may take a while if you have many chats...")
         
         detected_chats = []
-        max_retries = 3
-        retry_delay = 2
+        max_retries = 5  # Увеличить количество попыток для таймаутов
+        retry_delay = 3  # Начать с 3 секунд
         
         # Set up exception handler for asyncio to catch Pyrogram internal errors
         def exception_handler(loop, context):
@@ -267,7 +267,9 @@ class TelegramClient:
                     skipped_count = 0
                     
                     try:
-                        async for dialog in self.client.get_dialogs():
+                        # Получить диалоги с обработкой таймаутов
+                        # Используем limit=None для получения всех диалогов
+                        async for dialog in self.client.get_dialogs(limit=None):
                             try:
                                 chat = dialog.chat
                                 dialog_count += 1
@@ -354,7 +356,23 @@ class TelegramClient:
                     
                 except Exception as e:
                     error_str = str(e)
-                    if "Connection lost" in error_str or "Connection" in error_str:
+                    # Handle timeout errors
+                    if "timed out" in error_str.lower() or "timeout" in error_str.lower() or "Request timed out" in error_str:
+                        if attempt < max_retries - 1:
+                            logger.warning(f"   Request timed out, retrying in {retry_delay} seconds... ({attempt + 1}/{max_retries})")
+                            logger.info("   💡 This is normal if you have many chats. Please wait...")
+                            await asyncio.sleep(retry_delay)
+                            retry_delay *= 2  # Exponential backoff
+                            continue
+                        else:
+                            logger.error(f"   Failed after {max_retries} attempts due to timeout: {e}")
+                            logger.info("   💡 Telegram API timed out. This can happen if:")
+                            logger.info("      • You have many chats/dialogs")
+                            logger.info("      • Your internet connection is slow")
+                            logger.info("      • Telegram servers are busy")
+                            logger.info("   💡 Try again later or add chats manually with: chat add")
+                            break
+                    elif "Connection lost" in error_str or "Connection" in error_str:
                         if attempt < max_retries - 1:
                             logger.warning(f"   Connection lost, retrying in {retry_delay} seconds... ({attempt + 1}/{max_retries})")
                             await asyncio.sleep(retry_delay)

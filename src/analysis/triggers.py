@@ -126,10 +126,10 @@ FRONTEND_PATTERNS: dict[str, TriggerPattern] = {
 
 MOBILE_PATTERNS: dict[str, TriggerPattern] = {
     "flutter_dev": {
-        "pattern": r"(?:flutter|flutter\s+dev).*?(?:разработчик|developer|programmer|specialist)",
+        "pattern": r"(?:нужен|ищ[уемся]*|требуется|разработчик\s+для\s+создания).*?(?:flutter|flutter\s+dev).*?(?:разработчик|developer|programmer|specialist|приложения|app)",
         "confidence": 0.95,
         "description": "Flutter разработчик"
-        # Examples: "нужен Flutter-разработчик"
+        # Examples: "нужен Flutter-разработчик", "разработчик для создания мобильного приложения на Flutter"
     },
     
     "react_native_dev": {
@@ -154,10 +154,10 @@ MOBILE_PATTERNS: dict[str, TriggerPattern] = {
     },
     
     "mobile_app": {
-        "pattern": r"(?:мобильное\s+приложение|mobile\s+app|ios|android).*?(?:разработчик|разработка|developer)",
+        "pattern": r"(?:разработчик\s+для\s+создания|нужен|ищ[уемся]*|требуется).*?(?:мобильного\s+приложения|mobile\s+app|мобильное\s+приложение).*?(?:на\s+)?(?:flutter|react\s*native|ios|android)?",
         "confidence": 0.90,
         "description": "Мобильное приложение (общее)"
-        # Examples: "нужна разработка мобильного приложения", "ищем iOS разработчика"
+        # Examples: "нужна разработка мобильного приложения", "разработчик для создания мобильного приложения на Flutter"
     },
 }
 
@@ -183,10 +183,10 @@ AI_ML_PATTERNS: dict[str, TriggerPattern] = {
     },
     
     "chatgpt_integration": {
-        "pattern": r"(?:chatgpt|gpt-?4|openai|chat\s*bot).*?(?:интеграция|integration|подключение|create|создание|в\s+наше)",
+        "pattern": r"(?:нужна\s+помощь\s+с|помощь\s+с|интеграция|integration|подключение|create|создание|в\s+наш).*?(?:chatgpt|gpt-?4|openai|chat\s*bot)",
         "confidence": 0.90,
         "description": "ChatGPT / OpenAI интеграция"
-        # Examples: "интеграция ChatGPT", "подключить OpenAI к нашему приложению"
+        # Examples: "интеграция ChatGPT", "нужна помощь с интеграцией ChatGPT в наш проект"
     },
     
     "automation_business": {

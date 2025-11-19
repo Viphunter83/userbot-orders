@@ -5,6 +5,7 @@ from typing import List, Optional
 from loguru import logger
 from sqlalchemy import select, and_, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 
 from src.database.schemas import Chat, Message, Order, Stat, ChatStat, Feedback
 from src.models.enums import OrderCategory, DetectionMethod
@@ -17,12 +18,38 @@ class ChatRepository:
         self.session = session
     
     async def create(self, chat_id: str, chat_name: str, chat_type: str = "group") -> Chat:
-        """Добавить новый чат в мониторинг."""
-        chat = Chat(chat_id=chat_id, chat_name=chat_name, chat_type=chat_type)
-        self.session.add(chat)
-        await self.session.flush()
-        logger.info(f"Chat created: {chat_id}")
-        return chat
+        """
+        Добавить новый чат в мониторинг.
+        
+        Returns:
+            Chat если создан успешно или уже существует
+        
+        Raises:
+            IntegrityError если произошла другая ошибка целостности данных
+        """
+        # Проверить существование чата перед созданием
+        existing_chat = await self.get_by_id(chat_id)
+        if existing_chat:
+            logger.debug(f"Chat already exists: {chat_id}, returning existing")
+            return existing_chat
+        
+        try:
+            chat = Chat(chat_id=chat_id, chat_name=chat_name, chat_type=chat_type)
+            self.session.add(chat)
+            await self.session.flush()
+            logger.info(f"Chat created: {chat_id}")
+            return chat
+        except IntegrityError as e:
+            # Обработать race condition: чат был создан между проверкой и вставкой
+            await self.session.rollback()
+            logger.warning(f"IntegrityError creating chat (likely duplicate): {chat_id}, attempting to fetch existing")
+            existing_chat = await self.get_by_id(chat_id)
+            if existing_chat:
+                logger.debug(f"Found existing chat: {chat_id}")
+                return existing_chat
+            # Если не удалось получить, пробросить ошибку дальше
+            logger.error(f"Failed to create or fetch chat: {chat_id}, error: {e}")
+            raise
     
     async def get_by_id(self, chat_id: str) -> Optional[Chat]:
         """Получить чат по ID."""
@@ -66,19 +93,39 @@ class MessageRepository:
         author_name: Optional[str],
         text: str,
         timestamp: datetime,
-    ) -> Message:
-        """Создать новое сообщение."""
-        message = Message(
-            message_id=message_id,
-            chat_id=chat_id,
-            author_id=author_id,
-            author_name=author_name,
-            text=text,
-            timestamp=timestamp,
-        )
-        self.session.add(message)
-        await self.session.flush()
-        return message
+    ) -> Optional[Message]:
+        """
+        Создать новое сообщение.
+        
+        Returns:
+            Message если создано успешно, None если сообщение уже существует (дубликат)
+        
+        Raises:
+            IntegrityError если произошла другая ошибка целостности данных
+        """
+        # Проверить существование сообщения перед созданием (защита от race condition)
+        if await self.exists(message_id, chat_id):
+            logger.debug(f"Message already exists: {message_id} in chat {chat_id}")
+            return None
+        
+        try:
+            message = Message(
+                message_id=message_id,
+                chat_id=chat_id,
+                author_id=author_id,
+                author_name=author_name,
+                text=text,
+                timestamp=timestamp,
+            )
+            self.session.add(message)
+            await self.session.flush()
+            return message
+        except IntegrityError as e:
+            # Обработать race condition: сообщение было создано между проверкой и вставкой
+            await self.session.rollback()
+            logger.warning(f"IntegrityError creating message (likely duplicate): {message_id} in chat {chat_id}")
+            # Сообщение уже существует, это нормально
+            return None
     
     async def exists(self, message_id: str, chat_id: str) -> bool:
         """Проверить существование сообщения (дедупликация)."""
@@ -113,6 +160,20 @@ class OrderRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
     
+    async def exists(self, message_id: str) -> bool:
+        """Проверить существование заказа по message_id (дедупликация)."""
+        stmt = select(func.count()).select_from(Order).where(
+            Order.message_id == message_id
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar() > 0
+    
+    async def get_by_message_id(self, message_id: str) -> Optional[Order]:
+        """Получить заказ по message_id."""
+        stmt = select(Order).where(Order.message_id == message_id)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+    
     async def create(
         self,
         message_id: str,
@@ -124,23 +185,49 @@ class OrderRepository:
         relevance_score: float,
         detected_by: str,
         telegram_link: Optional[str] = None,
-    ) -> Order:
-        """Создать новый обнаруженный заказ."""
-        order = Order(
-            message_id=message_id,
-            chat_id=chat_id,
-            author_id=author_id,
-            author_name=author_name,
-            text=text,
-            category=category,
-            relevance_score=relevance_score,
-            detected_by=detected_by,
-            telegram_link=telegram_link,
-        )
-        self.session.add(order)
-        await self.session.flush()
-        logger.info(f"Order created: {category} from {author_id}")
-        return order
+    ) -> Optional[Order]:
+        """
+        Создать новый обнаруженный заказ.
+        
+        Returns:
+            Order если создан успешно, None если заказ уже существует (дубликат)
+        
+        Raises:
+            IntegrityError если произошла другая ошибка целостности данных
+        """
+        # Проверить существование заказа перед созданием (защита от race condition)
+        if await self.exists(message_id):
+            logger.debug(f"Order already exists for message_id: {message_id}, skipping duplicate")
+            return await self.get_by_message_id(message_id)
+        
+        try:
+            order = Order(
+                message_id=message_id,
+                chat_id=chat_id,
+                author_id=author_id,
+                author_name=author_name,
+                text=text,
+                category=category,
+                relevance_score=relevance_score,
+                detected_by=detected_by,
+                telegram_link=telegram_link,
+            )
+            self.session.add(order)
+            await self.session.flush()
+            logger.info(f"Order created: {category} from {author_id}")
+            return order
+        except IntegrityError as e:
+            # Обработать случай когда заказ был создан между проверкой и вставкой (race condition)
+            await self.session.rollback()
+            logger.warning(f"IntegrityError creating order (likely duplicate): {message_id}, attempting to fetch existing")
+            # Попытаться получить существующий заказ
+            existing_order = await self.get_by_message_id(message_id)
+            if existing_order:
+                logger.debug(f"Found existing order for message_id: {message_id}")
+                return existing_order
+            # Если не удалось получить, пробросить ошибку дальше
+            logger.error(f"Failed to create or fetch order for message_id: {message_id}, error: {e}")
+            raise
     
     async def get_by_id(self, order_id: int) -> Optional[Order]:
         """Получить заказ по ID."""

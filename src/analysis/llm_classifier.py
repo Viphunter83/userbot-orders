@@ -49,6 +49,9 @@ class LLMClassifier:
         self.total_cost_usd = 0.0
         self.total_requests = 0
         
+        # Task для периодической очистки кеша (будет создана лениво)
+        self._cleanup_task: Optional[asyncio.Task] = None
+        
         logger.info(
             f"✓ LLMClassifier initialized",
             extra={
@@ -80,6 +83,15 @@ class LLMClassifier:
         if not text or len(text.strip()) < 3:
             return None
         
+        # Запустить очистку кеша если еще не запущена
+        if self.cache and self._cleanup_task is None:
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    self._cleanup_task = asyncio.create_task(self._cleanup_loop())
+            except RuntimeError:
+                pass
+        
         # Проверить кеш
         if self.cache:
             cached = self.cache.get(text)
@@ -100,6 +112,31 @@ class LLMClassifier:
             self.cache.set(text, result)
         
         return result
+    
+    async def _cleanup_loop(self) -> None:
+        """Периодически очищать истёкшие записи из кеша."""
+        try:
+            while True:
+                try:
+                    await asyncio.sleep(300)  # Каждые 5 минут
+                    if self.cache:
+                        self.cache.cleanup_expired()
+                        cache_size = len(self.cache.cache)
+                        if cache_size > 0:
+                            logger.debug(f"Cache cleanup completed, cache size: {cache_size}")
+                except asyncio.CancelledError:
+                    logger.debug("Cache cleanup task cancelled")
+                    break
+                except Exception as e:
+                    logger.error(f"Error in cache cleanup: {e}")
+        finally:
+            self._cleanup_task = None
+    
+    def stop_cleanup_task(self) -> None:
+        """Остановить задачу очистки кеша (для тестов и завершения работы)."""
+        if self._cleanup_task and not self._cleanup_task.done():
+            self._cleanup_task.cancel()
+            logger.debug("Cache cleanup task cancellation requested")
     
     async def classify_batch(self, texts: list[str]) -> list[Optional[LLMClassificationResult]]:
         """

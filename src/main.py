@@ -106,12 +106,24 @@ class UserbotApp:
                             chat = await chat_repo.get_by_id(str(chat_id))
                             if not chat:
                                 # Determine chat type
-                                chat_type = "channel"
+                                chat_type = "channel"  # Default
                                 if hasattr(message.chat, 'type'):
-                                    if message.chat.type == "group":
+                                    chat_type_str = str(message.chat.type)
+                                    if chat_type_str == "group":
                                         chat_type = "group"
-                                    elif message.chat.type == "supergroup":
-                                        chat_type = "group"
+                                    elif chat_type_str == "supergroup":
+                                        chat_type = "supergroup"
+                                    elif chat_type_str == "channel":
+                                        chat_type = "channel"
+                                    else:
+                                        # Fallback: try to get from chat config
+                                        from src.config.chat_config import chat_config_manager
+                                        chat_config = chat_config_manager.get_chat_config(str(chat_id))
+                                        if chat_config:
+                                            chat_type = chat_config.chat_type
+                                        else:
+                                            logger.warning(f"Unknown chat type: {chat_type_str}, defaulting to 'group'")
+                                            chat_type = "group"
                                 
                                 chat = await chat_repo.create(
                                     chat_id=str(chat_id),
@@ -119,22 +131,20 @@ class UserbotApp:
                                     chat_type=chat_type
                                 )
                             
-                            # Check if message already exists (deduplication)
+                            # Save message (метод create сам проверяет на дубликаты)
                             message_id_str = str(message.id)
-                            if not await message_repo.exists(message_id_str, str(chat_id)):
-                                # Save message
-                                await message_repo.create(
-                                    message_id=message_id_str,
-                                    chat_id=str(chat_id),
-                                    author_id=str(author_id) if author_id else "unknown",
-                                    author_name=author_username[:255] if author_username else None,
-                                    text=message_text[:10000] if len(message_text) > 10000 else message_text,  # Limit text length
-                                    timestamp=message_date,
-                                )
-                                
-                                # Update chat's last message time
+                            saved_message = await message_repo.create(
+                                message_id=message_id_str,
+                                chat_id=str(chat_id),
+                                author_id=str(author_id) if author_id else "unknown",
+                                author_name=author_username[:255] if author_username else None,
+                                text=message_text[:10000] if len(message_text) > 10000 else message_text,  # Limit text length
+                                timestamp=message_date,
+                            )
+                            
+                            if saved_message:
+                                # Update chat's last message time только если сообщение было создано
                                 await chat_repo.update_last_message_time(str(chat_id))
-                                
                                 logger.debug(f"  Message saved to database: {message_id_str}")
                             else:
                                 logger.debug(f"  Message already exists in database: {message_id_str}")
@@ -181,8 +191,8 @@ class UserbotApp:
                                 except Exception as link_error:
                                     logger.debug(f"Could not build telegram link: {link_error}")
                                 
-                                # Save order
-                                await order_repo.create(
+                                # Save order (метод create сам проверяет на дубликаты)
+                                saved_order = await order_repo.create(
                                     message_id=str(message.id),
                                     chat_id=str(chat_id),
                                     author_id=str(author_id) if author_id else "unknown",
@@ -194,13 +204,15 @@ class UserbotApp:
                                     telegram_link=telegram_link[:500] if telegram_link else None,
                                 )
                                 
-                                # Update statistics
-                                await stat_repo.update_metrics(
-                                    detected_orders=1,
-                                    regex_detections=1,
-                                )
-                                
-                                logger.info(f"  ✓ Order saved to database")
+                                if saved_order:
+                                    # Update statistics только если заказ был создан (не дубликат)
+                                    await stat_repo.update_metrics(
+                                        detected_orders=1,
+                                        regex_detections=1,
+                                    )
+                                    logger.info(f"  ✓ Order saved to database")
+                                else:
+                                    logger.debug(f"  Order already exists for message_id: {message.id}, skipping duplicate")
                             finally:
                                 # Session will be auto-committed/closed by generator
                                 break
@@ -247,8 +259,8 @@ class UserbotApp:
                                             except Exception as link_error:
                                                 logger.debug(f"Could not build telegram link: {link_error}")
                                             
-                                            # Save order
-                                            await order_repo.create(
+                                            # Save order (метод create сам проверяет на дубликаты)
+                                            saved_order = await order_repo.create(
                                                 message_id=str(message.id),
                                                 chat_id=str(chat_id),
                                                 author_id=str(author_id) if author_id else "unknown",
@@ -260,15 +272,17 @@ class UserbotApp:
                                                 telegram_link=telegram_link[:500] if telegram_link else None,
                                             )
                                             
-                                            # Update statistics
-                                            await stat_repo.update_metrics(
-                                                detected_orders=1,
-                                                llm_detections=1,
-                                                llm_tokens_used=llm_result.tokens_used or 0,
-                                                llm_cost=llm_result.cost_usd or 0.0,
-                                            )
-                                            
-                                            logger.info(f"  ✓ Order saved to database (LLM)")
+                                            if saved_order:
+                                                # Update statistics только если заказ был создан (не дубликат)
+                                                await stat_repo.update_metrics(
+                                                    detected_orders=1,
+                                                    llm_detections=1,
+                                                    llm_tokens_used=llm_result.tokens_used or 0,
+                                                    llm_cost=llm_result.cost_usd or 0.0,
+                                                )
+                                                logger.info(f"  ✓ Order saved to database (LLM)")
+                                            else:
+                                                logger.debug(f"  Order already exists for message_id: {message.id}, skipping duplicate (LLM)")
                                         finally:
                                             break
                                 except Exception as e:
@@ -387,9 +401,12 @@ class UserbotApp:
             except Exception as e:
                 logger.error(f"Error closing database: {e}")
         
-        # Вывести финальные метрики LLM
+        # Вывести финальные метрики LLM и остановить cleanup task
         try:
             from src.analysis.llm_classifier import llm_classifier
+            # Остановить cleanup task если запущена
+            if hasattr(llm_classifier, 'stop_cleanup_task'):
+                llm_classifier.stop_cleanup_task()
             if hasattr(llm_classifier, 'get_metrics'):
                 metrics = llm_classifier.get_metrics()
                 logger.info(
@@ -411,29 +428,107 @@ def csv(
 ):
     """Экспортировать заказы в CSV."""
     async def _export():
-        # Получить заказы из БД
-        await db_manager.initialize()
+        from datetime import timedelta
+        from src.database.schemas import Order
         
-        async for session in db_manager.get_session():
+        await db_manager.initialize()
+        orders = []
+        
+        # Попытка использовать прямое подключение к БД
+        if db_manager.is_initialized():
             try:
-                repo = OrderRepository(session)
+                async for session in db_manager.get_session():
+                    try:
+                        repo = OrderRepository(session)
+                        
+                        # Получить заказы в зависимости от периода
+                        if period == "today":
+                            today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+                            orders_raw = await repo.get_recent(days=2, limit=1000)
+                            orders = [o for o in orders_raw if o.created_at >= today_start]
+                        elif period == "week":
+                            orders = await repo.get_recent(days=7)
+                        elif period == "month":
+                            orders = await repo.get_recent(days=30)
+                        else:
+                            orders = await repo.get_recent(days=365)
+                    finally:
+                        break
+            except Exception as db_error:
+                logger.warning(f"Direct DB connection failed: {db_error}, falling back to REST API")
+                orders = []
+        
+        # Fallback на REST API если прямое подключение не работает или нет данных
+        if not orders:
+            try:
+                from src.database.supabase_client import get_supabase_client
+                client = await get_supabase_client()
                 
-                # Создать фильтр
-                filter_params = create_filter_for_period(period)
-                if category:
-                    filter_params.categories = [category]
-                
-                # Получить заказы
-                orders = await repo.get_recent(days=365)  # Получить все
-                filtered = OrderFilter.apply(orders, filter_params)
-                
-                # Экспортировать
-                exporter = CSVExporter(export_dir=output_dir)
-                path = exporter.export(filtered)
-                
-                typer.echo(f"✓ Exported {len(filtered)} orders to: {path}")
-            finally:
-                break
+                try:
+                    # Определить диапазон дат
+                    end_date = datetime.utcnow()
+                    if period == "today":
+                        start_date = end_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                    elif period == "week":
+                        start_date = end_date - timedelta(days=7)
+                    elif period == "month":
+                        start_date = end_date - timedelta(days=30)
+                    else:
+                        start_date = datetime(2000, 1, 1)
+                    
+                    # Получить заказы через REST API
+                    orders_data = await client.get_orders(
+                        limit=1000,
+                        start_date=start_date,
+                        end_date=end_date
+                    )
+                    
+                    # Конвертировать в объекты Order
+                    orders = []
+                    for order_data in orders_data:
+                        try:
+                            order = Order(
+                                id=order_data.get('id'),
+                                message_id=str(order_data.get('message_id', '')),
+                                chat_id=str(order_data.get('chat_id', '')),
+                                author_id=str(order_data.get('author_id', '')),
+                                author_name=order_data.get('author_name'),
+                                text=order_data.get('text', ''),
+                                category=order_data.get('category', 'Other'),
+                                relevance_score=float(order_data.get('relevance_score', 0.0)),
+                                detected_by=order_data.get('detected_by', 'manual'),
+                                telegram_link=order_data.get('telegram_link'),
+                                created_at=datetime.fromisoformat(order_data['created_at'].replace('Z', '+00:00')) if order_data.get('created_at') else datetime.utcnow(),
+                                exported=order_data.get('exported', False),
+                            )
+                            orders.append(order)
+                        except Exception as conv_error:
+                            logger.debug(f"Error converting order data: {conv_error}")
+                            continue
+                    
+                    logger.info(f"Retrieved {len(orders)} orders via REST API (period: {period})")
+                finally:
+                    await client.close()
+            except Exception as rest_error:
+                logger.error(f"REST API fallback failed: {rest_error}")
+                logger.info("No database connection available. Please check your configuration.")
+        
+        # Применить фильтры
+        if orders:
+            filter_params = create_filter_for_period(period)
+            if category:
+                filter_params.categories = [category]
+            
+            filtered = OrderFilter.apply(orders, filter_params)
+            
+            # Экспортировать
+            exporter = CSVExporter(export_dir=output_dir)
+            path = exporter.export(filtered)
+            
+            typer.echo(f"✓ Exported {len(filtered)} orders to: {path}")
+        else:
+            typer.echo(f"⚠️  No orders found for period: {period}" + (f", category: {category}" if category else ""))
+            typer.echo("   No data to export.")
         
         await db_manager.close()
     
@@ -448,26 +543,95 @@ def html(
 ):
     """Экспортировать заказы в интерактивную HTML таблицу."""
     async def _export():
-        await db_manager.initialize()
+        from datetime import datetime
+        from src.database.schemas import Order
         
-        async for session in db_manager.get_session():
+        await db_manager.initialize()
+        orders = []
+        
+        # Попытка использовать прямое подключение к БД
+        if db_manager.is_initialized():
             try:
-                repo = OrderRepository(session)
+                async for session in db_manager.get_session():
+                    try:
+                        repo = OrderRepository(session)
+                        orders = await repo.get_recent(days=365, limit=1000)
+                    finally:
+                        break
+            except Exception as db_error:
+                logger.warning(f"Direct DB connection failed: {db_error}, falling back to REST API")
+                orders = []
+        
+        # Fallback на REST API если прямое подключение не работает или нет данных
+        if not orders:
+            try:
+                from datetime import timedelta
+                from src.database.supabase_client import get_supabase_client
+                client = await get_supabase_client()
                 
-                filter_params = create_filter_for_period(period)
-                if category:
-                    filter_params.categories = [category]
-                
-                orders = await repo.get_recent(days=365)
-                filtered = OrderFilter.apply(orders, filter_params)
-                
-                exporter = HTMLExporter(export_dir=output_dir)
-                path = exporter.export(filtered)
-                
-                typer.echo(f"✓ Exported {len(filtered)} orders to: {path}")
-                typer.echo(f"✓ Open in browser: file://{path.absolute()}")
-            finally:
-                break
+                try:
+                    # Определить диапазон дат в зависимости от периода
+                    end_date = datetime.utcnow()
+                    if period == "today":
+                        start_date = end_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                    elif period == "week":
+                        start_date = end_date - timedelta(days=7)
+                    elif period == "month":
+                        start_date = end_date - timedelta(days=30)
+                    else:
+                        start_date = datetime(2000, 1, 1)
+                    
+                    orders_data = await client.get_orders(
+                        limit=1000,
+                        start_date=start_date,
+                        end_date=end_date
+                    )
+                    
+                    orders = []
+                    for order_data in orders_data:
+                        try:
+                            order = Order(
+                                id=order_data.get('id'),
+                                message_id=str(order_data.get('message_id', '')),
+                                chat_id=str(order_data.get('chat_id', '')),
+                                author_id=str(order_data.get('author_id', '')),
+                                author_name=order_data.get('author_name'),
+                                text=order_data.get('text', ''),
+                                category=order_data.get('category', 'Other'),
+                                relevance_score=float(order_data.get('relevance_score', 0.0)),
+                                detected_by=order_data.get('detected_by', 'manual'),
+                                telegram_link=order_data.get('telegram_link'),
+                                created_at=datetime.fromisoformat(order_data['created_at'].replace('Z', '+00:00')) if order_data.get('created_at') else datetime.utcnow(),
+                                exported=order_data.get('exported', False),
+                            )
+                            orders.append(order)
+                        except Exception as conv_error:
+                            logger.debug(f"Error converting order data: {conv_error}")
+                            continue
+                    
+                    logger.info(f"Retrieved {len(orders)} orders via REST API (period: {period})")
+                finally:
+                    await client.close()
+            except Exception as rest_error:
+                logger.error(f"REST API fallback failed: {rest_error}")
+                logger.info("No database connection available. Please check your configuration.")
+        
+        # Применить фильтры
+        if orders:
+            filter_params = create_filter_for_period(period)
+            if category:
+                filter_params.categories = [category]
+            
+            filtered = OrderFilter.apply(orders, filter_params)
+            
+            exporter = HTMLExporter(export_dir=output_dir)
+            path = exporter.export(filtered)
+            
+            typer.echo(f"✓ Exported {len(filtered)} orders to: {path}")
+            typer.echo(f"✓ Open in browser: file://{path.absolute()}")
+        else:
+            typer.echo(f"⚠️  No orders found for period: {period}" + (f", category: {category}" if category else ""))
+            typer.echo("   No data to export.")
         
         await db_manager.close()
     
@@ -516,28 +680,105 @@ async def main():
 
 @stats_app.command()
 def dashboard(
-    period: str = typer.Option("week", help="Period: week, month, all"),
+    period: str = typer.Option("week", help="Period: today, week, month, all"),
 ):
     """Показать dashboard с метриками."""
     async def _show_dashboard():
+        from datetime import datetime, timedelta
+        from src.database.schemas import Order
+        
         # Получить заказы
         await db_manager.initialize()
         
-        async for session in db_manager.get_session():
+        orders = []
+        
+        # Попытка использовать прямое подключение к БД
+        if db_manager.is_initialized():
             try:
-                repo = OrderRepository(session)
+                async for session in db_manager.get_session():
+                    try:
+                        repo = OrderRepository(session)
+                        
+                        if period == "today":
+                            today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+                            orders_raw = await repo.get_recent(days=2, limit=1000)
+                            orders = [o for o in orders_raw if o.created_at >= today_start]
+                            logger.debug(f"Found {len(orders)} orders for today (since {today_start})")
+                        elif period == "week":
+                            orders = await repo.get_recent(days=7)
+                        elif period == "month":
+                            orders = await repo.get_recent(days=30)
+                        else:
+                            orders = await repo.get_recent(days=365)
+                    finally:
+                        break
+            except Exception as db_error:
+                logger.warning(f"Direct DB connection failed: {db_error}, falling back to REST API")
+                orders = []  # Сбросить, чтобы попробовать REST API
+        
+        # Fallback на REST API если прямое подключение не работает или нет данных
+        if not orders:
+            try:
+                from src.database.supabase_client import get_supabase_client
+                client = await get_supabase_client()
                 
-                if period == "week":
-                    orders = await repo.get_recent(days=7)
-                elif period == "month":
-                    orders = await repo.get_recent(days=30)
-                else:
-                    orders = await repo.get_recent(days=365)
-                
-                # Показать dashboard
-                Dashboard.print_full_dashboard(orders, period)
-            finally:
-                break
+                try:
+                    # Определить диапазон дат
+                    end_date = datetime.utcnow()
+                    if period == "today":
+                        start_date = end_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                        days_back = 2
+                    elif period == "week":
+                        start_date = end_date - timedelta(days=7)
+                        days_back = 7
+                    elif period == "month":
+                        start_date = end_date - timedelta(days=30)
+                        days_back = 30
+                    else:
+                        start_date = datetime(2000, 1, 1)
+                        days_back = 365
+                    
+                    # Получить заказы через REST API
+                    orders_data = await client.get_orders(
+                        limit=1000,
+                        start_date=start_date,
+                        end_date=end_date
+                    )
+                    
+                    # Конвертировать в объекты Order
+                    orders = []
+                    for order_data in orders_data:
+                        try:
+                            # Преобразовать данные из REST API в объект Order
+                            order = Order(
+                                id=order_data.get('id'),
+                                message_id=str(order_data.get('message_id', '')),
+                                chat_id=str(order_data.get('chat_id', '')),
+                                author_id=str(order_data.get('author_id', '')),
+                                author_name=order_data.get('author_name'),
+                                text=order_data.get('text', ''),
+                                category=order_data.get('category', 'Other'),
+                                relevance_score=float(order_data.get('relevance_score', 0.0)),
+                                detected_by=order_data.get('detected_by', 'manual'),
+                                telegram_link=order_data.get('telegram_link'),
+                                created_at=datetime.fromisoformat(order_data['created_at'].replace('Z', '+00:00')) if order_data.get('created_at') else datetime.utcnow(),
+                                exported=order_data.get('exported', False),
+                            )
+                            orders.append(order)
+                        except Exception as conv_error:
+                            logger.debug(f"Error converting order data: {conv_error}")
+                            continue
+                    
+                    logger.info(f"Retrieved {len(orders)} orders via REST API (period: {period})")
+                finally:
+                    await client.close()
+            except Exception as rest_error:
+                logger.error(f"REST API fallback failed: {rest_error}")
+                logger.info("No database connection available. Please check your configuration.")
+        
+        # Показать dashboard
+        logger.debug(f"Displaying dashboard for {len(orders)} orders (period: {period})")
+        Dashboard.print_full_dashboard(orders, period)
         
         await db_manager.close()
     
@@ -546,40 +787,113 @@ def dashboard(
 
 @stats_app.command()
 def export(
-    period: str = typer.Option("week", help="Period: week, month, all"),
+    period: str = typer.Option("week", help="Period: today, week, month, all"),
     output_dir: str = typer.Option("./exports", help="Output directory"),
 ):
     """Экспортировать метрики в CSV."""
     async def _export_stats():
-        await db_manager.initialize()
+        from datetime import datetime, timedelta
+        from src.database.schemas import Order
         
-        async for session in db_manager.get_session():
+        await db_manager.initialize()
+        orders = []
+        
+        # Попытка использовать прямое подключение к БД
+        if db_manager.is_initialized():
             try:
-                repo = OrderRepository(session)
+                async for session in db_manager.get_session():
+                    try:
+                        repo = OrderRepository(session)
+                        
+                        if period == "today":
+                            today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+                            orders_raw = await repo.get_recent(days=2, limit=1000)
+                            orders = [o for o in orders_raw if o.created_at >= today_start]
+                        elif period == "week":
+                            orders = await repo.get_recent(days=7)
+                        elif period == "month":
+                            orders = await repo.get_recent(days=30)
+                        else:
+                            orders = await repo.get_recent(days=365)
+                    finally:
+                        break
+            except Exception as db_error:
+                logger.warning(f"Direct DB connection failed: {db_error}, falling back to REST API")
+                orders = []
+        
+        # Fallback на REST API если прямое подключение не работает или нет данных
+        if not orders:
+            try:
+                from src.database.supabase_client import get_supabase_client
+                client = await get_supabase_client()
                 
-                # Получить заказы
-                if period == "week":
-                    orders = await repo.get_recent(days=7)
-                elif period == "month":
-                    orders = await repo.get_recent(days=30)
-                else:
-                    orders = await repo.get_recent(days=365)
-                
-                # Экспортировать
-                reporter = MetricsReporter(export_dir=output_dir)
-                
-                # Daily metrics
-                period_metrics = MetricsCalculator.calculate_period_metrics(orders, period)
-                daily_path = reporter.export_daily_metrics_csv(period_metrics)
-                
-                # Category metrics
-                category_metrics = MetricsCalculator.calculate_category_metrics(orders)
-                category_path = reporter.export_category_metrics_csv(category_metrics)
-                
-                typer.echo(f"✓ Daily metrics exported to: {daily_path}")
-                typer.echo(f"✓ Category metrics exported to: {category_path}")
-            finally:
-                break
+                try:
+                    # Определить диапазон дат
+                    end_date = datetime.utcnow()
+                    if period == "today":
+                        start_date = end_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                    elif period == "week":
+                        start_date = end_date - timedelta(days=7)
+                    elif period == "month":
+                        start_date = end_date - timedelta(days=30)
+                    else:
+                        start_date = datetime(2000, 1, 1)
+                    
+                    # Получить заказы через REST API
+                    orders_data = await client.get_orders(
+                        limit=1000,
+                        start_date=start_date,
+                        end_date=end_date
+                    )
+                    
+                    # Конвертировать в объекты Order
+                    orders = []
+                    for order_data in orders_data:
+                        try:
+                            order = Order(
+                                id=order_data.get('id'),
+                                message_id=str(order_data.get('message_id', '')),
+                                chat_id=str(order_data.get('chat_id', '')),
+                                author_id=str(order_data.get('author_id', '')),
+                                author_name=order_data.get('author_name'),
+                                text=order_data.get('text', ''),
+                                category=order_data.get('category', 'Other'),
+                                relevance_score=float(order_data.get('relevance_score', 0.0)),
+                                detected_by=order_data.get('detected_by', 'manual'),
+                                telegram_link=order_data.get('telegram_link'),
+                                created_at=datetime.fromisoformat(order_data['created_at'].replace('Z', '+00:00')) if order_data.get('created_at') else datetime.utcnow(),
+                                exported=order_data.get('exported', False),
+                            )
+                            orders.append(order)
+                        except Exception as conv_error:
+                            logger.debug(f"Error converting order data: {conv_error}")
+                            continue
+                    
+                    logger.info(f"Retrieved {len(orders)} orders via REST API (period: {period})")
+                finally:
+                    await client.close()
+            except Exception as rest_error:
+                logger.error(f"REST API fallback failed: {rest_error}")
+                logger.info("No database connection available. Please check your configuration.")
+        
+        # Экспортировать метрики
+        if orders:
+            reporter = MetricsReporter(export_dir=output_dir)
+            
+            # Daily metrics
+            period_metrics = MetricsCalculator.calculate_period_metrics(orders, period)
+            daily_path = reporter.export_daily_metrics_csv(period_metrics)
+            
+            # Category metrics
+            category_metrics = MetricsCalculator.calculate_category_metrics(orders)
+            category_path = reporter.export_category_metrics_csv(category_metrics)
+            
+            typer.echo(f"✓ Daily metrics exported to: {daily_path}")
+            typer.echo(f"✓ Category metrics exported to: {category_path}")
+            typer.echo(f"✓ Exported metrics for {len(orders)} orders")
+        else:
+            typer.echo(f"⚠️  No orders found for period: {period}")
+            typer.echo("   No metrics to export.")
         
         await db_manager.close()
     
@@ -588,33 +902,88 @@ def export(
 
 @stats_app.command()
 def summary(
-    period: str = typer.Option("week", help="Period: week, month, all"),
+    period: str = typer.Option("week", help="Period: today, week, month, all"),
 ):
     """Показать сводный отчет."""
     async def _show_summary():
-        await db_manager.initialize()
+        from datetime import datetime, timedelta
+        from src.database.schemas import Order
         
-        async for session in db_manager.get_session():
+        await db_manager.initialize()
+        orders = []
+        
+        # Попытка использовать прямое подключение к БД
+        if db_manager.is_initialized():
             try:
-                repo = OrderRepository(session)
-                
-                # Получить заказы
-                if period == "week":
-                    orders = await repo.get_recent(days=7)
-                elif period == "month":
-                    orders = await repo.get_recent(days=30)
-                else:
-                    orders = await repo.get_recent(days=365)
-                
-                # Генерировать отчет
-                reporter = MetricsReporter()
-                summary = reporter.generate_summary_report(orders, period)
-                
-                # Печать
-                import json
-                typer.echo(json.dumps(summary, indent=2, ensure_ascii=False))
-            finally:
-                break
+                async for session in db_manager.get_session():
+                    try:
+                        repo = OrderRepository(session)
+                        
+                        if period == "today":
+                            today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+                            orders_raw = await repo.get_recent(days=2, limit=1000)
+                            orders = [o for o in orders_raw if o.created_at >= today_start]
+                        elif period == "week":
+                            orders = await repo.get_recent(days=7)
+                        elif period == "month":
+                            orders = await repo.get_recent(days=30)
+                        else:
+                            orders = await repo.get_recent(days=365)
+                    finally:
+                        break
+            except Exception as db_error:
+                logger.warning(f"Direct DB connection failed: {db_error}, falling back to REST API")
+                orders = []
+        
+        # Fallback на REST API
+        if not orders:
+            try:
+                from src.database.supabase_client import get_supabase_client
+                client = await get_supabase_client()
+                try:
+                    end_date = datetime.utcnow()
+                    if period == "today":
+                        start_date = end_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                    elif period == "week":
+                        start_date = end_date - timedelta(days=7)
+                    elif period == "month":
+                        start_date = end_date - timedelta(days=30)
+                    else:
+                        start_date = datetime(2000, 1, 1)
+                    
+                    orders_data = await client.get_orders(limit=1000, start_date=start_date, end_date=end_date)
+                    orders = []
+                    for order_data in orders_data:
+                        try:
+                            order = Order(
+                                id=order_data.get('id'),
+                                message_id=str(order_data.get('message_id', '')),
+                                chat_id=str(order_data.get('chat_id', '')),
+                                author_id=str(order_data.get('author_id', '')),
+                                author_name=order_data.get('author_name'),
+                                text=order_data.get('text', ''),
+                                category=order_data.get('category', 'Other'),
+                                relevance_score=float(order_data.get('relevance_score', 0.0)),
+                                detected_by=order_data.get('detected_by', 'manual'),
+                                telegram_link=order_data.get('telegram_link'),
+                                created_at=datetime.fromisoformat(order_data['created_at'].replace('Z', '+00:00')) if order_data.get('created_at') else datetime.utcnow(),
+                                exported=order_data.get('exported', False),
+                            )
+                            orders.append(order)
+                        except Exception:
+                            continue
+                finally:
+                    await client.close()
+            except Exception as rest_error:
+                logger.error(f"REST API fallback failed: {rest_error}")
+        
+        # Генерировать отчет
+        reporter = MetricsReporter()
+        summary = reporter.generate_summary_report(orders, period)
+        
+        # Печать
+        import json
+        typer.echo(json.dumps(summary, indent=2, ensure_ascii=False))
         
         await db_manager.close()
     
@@ -819,7 +1188,13 @@ def auto_detect():
         detected = await telegram_client.auto_detect_chats()
         
         if not detected:
-            typer.echo("No chats found")
+            typer.echo("\n⚠️  No chats found")
+            typer.echo("\nPossible reasons:")
+            typer.echo("  • Request timed out (try again)")
+            typer.echo("  • No group/channel chats in your account")
+            typer.echo("  • All chats are private")
+            typer.echo("\n💡 You can add chats manually:")
+            typer.echo("  python3 -m src.main chat add <chat_id> --name \"Chat Name\"")
             await telegram_client.stop()
             return
         

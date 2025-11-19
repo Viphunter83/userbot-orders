@@ -202,6 +202,35 @@ class ChatConfigManager:
             json.dump(data, f, indent=2, ensure_ascii=False)
     
     @classmethod
+    def _normalize_chat_type(cls, chat_type: str) -> str:
+        """
+        Нормализовать тип чата из различных форматов.
+        
+        Args:
+            chat_type: Тип чата (может быть "ChatType.SUPERGROUP", "supergroup", "SUPERGROUP" и т.д.)
+        
+        Returns:
+            Нормализованный тип: "group", "channel", "supergroup"
+        """
+        if not chat_type:
+            return "group"
+        
+        # Убрать префикс "ChatType." если есть
+        normalized = chat_type.replace("ChatType.", "").lower()
+        
+        # Нормализовать варианты
+        if normalized in ["supergroup", "super_group"]:
+            return "supergroup"
+        elif normalized in ["channel", "channels"]:
+            return "channel"
+        elif normalized in ["group", "groups"]:
+            return "group"
+        else:
+            # По умолчанию возвращаем как есть, но логируем предупреждение
+            logger.warning(f"Unknown chat_type format: {chat_type}, using as-is")
+            return normalized
+    
+    @classmethod
     def _load_from_file(cls):
         """Загрузить конфиг из JSON файла."""
         if not cls._config_file.exists():
@@ -214,10 +243,14 @@ class ChatConfigManager:
             cls._monitored_chats.clear()
             
             for chat_id, config_data in data.items():
+                # Нормализовать chat_type
+                raw_chat_type = config_data.get('chat_type', 'group')
+                normalized_chat_type = cls._normalize_chat_type(raw_chat_type)
+                
                 config = ChatConfig(
                     chat_id=config_data['chat_id'],
                     chat_name=config_data['chat_name'],
-                    chat_type=config_data['chat_type'],
+                    chat_type=normalized_chat_type,
                     is_active=config_data.get('is_active', True),
                     enabled_at=datetime.fromisoformat(config_data['enabled_at']) if config_data.get('enabled_at') else None,
                     disabled_at=datetime.fromisoformat(config_data['disabled_at']) if config_data.get('disabled_at') else None,
@@ -225,9 +258,11 @@ class ChatConfigManager:
                     priority=config_data.get('priority', 1),
                 )
                 cls._monitored_chats[chat_id] = config
+            
+            logger.info(f"✓ Loaded {len(cls._monitored_chats)} chats from config (chat_types normalized)")
         
         except Exception as e:
-            logger.error(f"Error loading chat config: {e}")
+            logger.error(f"Error loading chat config: {e}", exc_info=True)
 
 
 # Global instance
