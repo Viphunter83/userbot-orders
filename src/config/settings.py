@@ -24,6 +24,17 @@ class Settings(BaseSettings):
     supabase_url: str = Field(..., description="Supabase project URL")
     supabase_key: str = Field(..., description="Supabase anon/service key")
     
+    # Supabase PostgreSQL direct connection (optional, for SQLAlchemy)
+    supabase_user: str = Field(default="postgres", description="Supabase PostgreSQL user")
+    supabase_password: str = Field(default="", description="Supabase PostgreSQL password")
+    supabase_host: str = Field(default="", description="Supabase PostgreSQL host")
+    supabase_port: int = Field(default=5432, description="Supabase PostgreSQL port")
+    supabase_db: str = Field(default="postgres", description="Supabase PostgreSQL database name")
+    
+    # Database settings
+    database_echo: bool = Field(default=False, description="Echo SQL queries")
+    environment: str = Field(default="development", description="Environment (development, production, test)")
+    
     # LLM configuration
     llm_provider: str = Field(default="proxyapi", description="LLM provider name")
     llm_model: str = Field(default="gpt-4o-mini", description="LLM model name")

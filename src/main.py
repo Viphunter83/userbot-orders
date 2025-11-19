@@ -11,6 +11,8 @@ from src.telegram.client import TelegramClient
 from src.utils.logger import setup_logger
 from src.config.settings import get_settings
 from src.analysis.regex_analyzer import RegexAnalyzer
+from src.database.base import db_manager
+from src.database.repository import ChatRepository, MessageRepository, OrderRepository, StatRepository
 
 
 class UserbotApp:
@@ -25,6 +27,7 @@ class UserbotApp:
         self.shutdown_event = asyncio.Event()
         self.loop = None
         self.regex_analyzer = RegexAnalyzer()
+        self.db_initialized = False
         
         logger.info("Userbot application initialized")
     
@@ -67,6 +70,57 @@ class UserbotApp:
                 f"Time: {time_str}"
             )
             
+            # Save message to database if DB is initialized
+            if self.db_initialized:
+                try:
+                    # Use async generator properly
+                    async for session in db_manager.get_session():
+                        try:
+                            chat_repo = ChatRepository(session)
+                            message_repo = MessageRepository(session)
+                            
+                            # Ensure chat exists
+                            chat = await chat_repo.get_by_id(str(chat_id))
+                            if not chat:
+                                # Determine chat type
+                                chat_type = "channel"
+                                if hasattr(message.chat, 'type'):
+                                    if message.chat.type == "group":
+                                        chat_type = "group"
+                                    elif message.chat.type == "supergroup":
+                                        chat_type = "group"
+                                
+                                chat = await chat_repo.create(
+                                    chat_id=str(chat_id),
+                                    chat_name=chat_title[:255],  # Limit length
+                                    chat_type=chat_type
+                                )
+                            
+                            # Check if message already exists (deduplication)
+                            message_id_str = str(message.id)
+                            if not await message_repo.exists(message_id_str, str(chat_id)):
+                                # Save message
+                                await message_repo.create(
+                                    message_id=message_id_str,
+                                    chat_id=str(chat_id),
+                                    author_id=str(author_id) if author_id else "unknown",
+                                    author_name=author_username[:255] if author_username else None,
+                                    text=message_text[:10000] if len(message_text) > 10000 else message_text,  # Limit text length
+                                    timestamp=message_date,
+                                )
+                                
+                                # Update chat's last message time
+                                await chat_repo.update_last_message_time(str(chat_id))
+                                
+                                logger.debug(f"  Message saved to database: {message_id_str}")
+                            else:
+                                logger.debug(f"  Message already exists in database: {message_id_str}")
+                        finally:
+                            # Session will be auto-committed/closed by generator
+                            break
+                except Exception as e:
+                    logger.error(f"Error saving message to database: {e}", exc_info=True)
+            
             # Analyze message with regex analyzer (first level filter)
             detection_result = self.regex_analyzer.analyze(message_text)
             if detection_result:
@@ -76,6 +130,57 @@ class UserbotApp:
                     f"pattern: {detection_result.matched_pattern})"
                 )
                 logger.debug(f"  Matched text: '{detection_result.matched_text}'")
+                
+                # Save order to database if DB is initialized
+                if self.db_initialized:
+                    try:
+                        # Use async generator properly
+                        async for session in db_manager.get_session():
+                            try:
+                                order_repo = OrderRepository(session)
+                                stat_repo = StatRepository(session)
+                                
+                                # Build telegram link
+                                telegram_link = None
+                                try:
+                                    if hasattr(message.chat, 'username') and message.chat.username:
+                                        telegram_link = f"https://t.me/{message.chat.username}/{message.id}"
+                                    elif message.chat.id < 0:
+                                        # For private groups/channels, format: https://t.me/c/CHAT_ID/MESSAGE_ID
+                                        chat_id_str = str(abs(message.chat.id))
+                                        # Remove first 4 digits for public link format
+                                        if len(chat_id_str) > 4:
+                                            telegram_link = f"https://t.me/c/{chat_id_str[4:]}/{message.id}"
+                                        else:
+                                            telegram_link = f"https://t.me/c/{chat_id_str}/{message.id}"
+                                except Exception as link_error:
+                                    logger.debug(f"Could not build telegram link: {link_error}")
+                                
+                                # Save order
+                                await order_repo.create(
+                                    message_id=str(message.id),
+                                    chat_id=str(chat_id),
+                                    author_id=str(author_id) if author_id else "unknown",
+                                    author_name=author_username[:255] if author_username else None,
+                                    text=message_text[:10000] if len(message_text) > 10000 else message_text,
+                                    category=detection_result.category.value,
+                                    relevance_score=detection_result.confidence,
+                                    detected_by=detection_result.detected_by.value,
+                                    telegram_link=telegram_link[:500] if telegram_link else None,
+                                )
+                                
+                                # Update statistics
+                                await stat_repo.update_metrics(
+                                    detected_orders=1,
+                                    regex_detections=1 if detection_result.detected_by.value == "regex" else 0,
+                                )
+                                
+                                logger.info(f"  ✓ Order saved to database")
+                            finally:
+                                # Session will be auto-committed/closed by generator
+                                break
+                    except Exception as e:
+                        logger.error(f"Error saving order to database: {e}", exc_info=True)
             else:
                 logger.debug("  No order detected by regex")
             
@@ -105,6 +210,18 @@ class UserbotApp:
             logger.info("=" * 60)
             logger.info("Starting Telegram Userbot for Order Monitoring")
             logger.info("=" * 60)
+            
+            # Initialize database connection
+            try:
+                await db_manager.initialize()
+                if db_manager.is_initialized():
+                    self.db_initialized = True
+                    logger.info("✓ Database connection initialized")
+                else:
+                    logger.warning("Database not initialized (using REST API mode)")
+            except Exception as e:
+                logger.warning(f"Database initialization failed: {e}. Continuing without DB...")
+                self.db_initialized = False
             
             # Initialize Telegram client
             self.client = TelegramClient(session_name="userbot_orders")
@@ -148,6 +265,14 @@ class UserbotApp:
                 await self.client.stop()
             except Exception as e:
                 logger.error(f"Error stopping client: {e}")
+        
+        # Close database connections
+        if self.db_initialized:
+            try:
+                await db_manager.close()
+                logger.info("✓ Database connections closed")
+            except Exception as e:
+                logger.error(f"Error closing database: {e}")
         
         logger.info("✓ Userbot stopped")
 

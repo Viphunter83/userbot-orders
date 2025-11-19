@@ -1,109 +1,155 @@
-"""Database base configuration using SQLAlchemy + asyncpg for Supabase."""
+"""Database connection and session management."""
 
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import declarative_base
-from sqlalchemy.pool import NullPool
+import asyncio
+from typing import AsyncGenerator, Optional
 from loguru import logger
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    create_async_engine,
+    async_sessionmaker,
+    AsyncEngine,
+)
+from sqlalchemy.pool import NullPool, QueuePool
+from sqlalchemy.orm import DeclarativeBase
 
 from src.config.settings import get_settings
-from src.utils.logger import setup_logger
-
-# Base class for SQLAlchemy models
-Base = declarative_base()
-
-# Global engine and session factory
-_engine = None
-_session_factory = None
 
 
-def get_database_url() -> str:
+class Base(DeclarativeBase):
+    """Base class for all SQLAlchemy models."""
+    pass
+
+
+class DatabaseManager:
     """
-    Build PostgreSQL connection URL for Supabase.
-    
-    Returns:
-        PostgreSQL async connection URL
+    Менеджер для управления подключением к Supabase.
+    Поддерживает асинхронные операции и connection pooling.
     """
-    settings = get_settings()
-    url = settings.supabase_url
     
-    # Extract project reference from Supabase URL
-    # Format: https://{project_ref}.supabase.co
-    if url.startswith("https://"):
-        url = url.replace("https://", "").replace(".supabase.co", "")
+    _instance: Optional["DatabaseManager"] = None
+    _engine: Optional[AsyncEngine] = None
+    _session_maker: Optional[async_sessionmaker] = None
     
-    # Build PostgreSQL connection string
-    # Supabase uses format: postgresql://postgres:[PASSWORD]@db.{project_ref}.supabase.co:5432/postgres
-    # For asyncpg we need: postgresql+asyncpg://...
+    def __new__(cls):
+        """Singleton pattern для гарантированного единственного instance."""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
     
-    # Note: We'll use the REST API key approach, but for direct DB access we'd need DB password
-    # For now, we'll use the connection pool URL format
-    # In production, you'd get the DB password from Supabase dashboard
-    
-    # Since we only have the API key, we'll use Supabase REST API via httpx instead
-    # This file sets up the structure for future direct DB access
-    
-    db_url = f"postgresql+asyncpg://postgres:[PASSWORD]@db.{url}.supabase.co:5432/postgres"
-    
-    logger.warning(
-        "Direct database connection requires DB password from Supabase dashboard. "
-        "Currently using REST API via supabase_client.py"
-    )
-    
-    return db_url
-
-
-def init_database() -> None:
-    """Initialize database engine and session factory."""
-    global _engine, _session_factory
-    
-    if _engine is None:
+    async def initialize(self) -> None:
+        """
+        Инициализировать подключение к Supabase.
+        Вызывать один раз при запуске приложения.
+        """
+        if self._engine is not None:
+            logger.warning("DatabaseManager already initialized")
+            return
+        
         settings = get_settings()
-        setup_logger(log_level=settings.log_level)
         
-        # For now, we'll use REST API approach
-        # Direct DB connection requires DB password from Supabase dashboard
-        logger.info("Database initialization: Using REST API approach")
-        logger.info("For direct DB access, configure DB_PASSWORD in .env")
+        # Build Supabase DSN
+        # Format: postgresql+asyncpg://user:password@host:port/database
+        # Если пароль не указан, используем REST API подход
+        if not settings.supabase_password or not settings.supabase_host:
+            logger.warning(
+                "Supabase PostgreSQL password/host not configured. "
+                "Using REST API approach via supabase_client.py. "
+                "For direct DB access, configure SUPABASE_PASSWORD and SUPABASE_HOST in .env"
+            )
+            return
         
-        # Uncomment when DB password is available:
-        # db_url = get_database_url()
-        # _engine = create_async_engine(
-        #     db_url,
-        #     poolclass=NullPool,
-        #     echo=False,
-        #     future=True,
-        # )
-        # _session_factory = async_sessionmaker(
-        #     _engine,
-        #     class_=AsyncSession,
-        #     expire_on_commit=False,
-        # )
-        
-        logger.info("✓ Database configuration ready (REST API mode)")
-
-
-async def get_session() -> AsyncSession:
-    """
-    Get async database session.
-    
-    Returns:
-        AsyncSession instance
-        
-    Note: Currently returns None as we're using REST API approach.
-    For direct DB access, configure DB_PASSWORD in .env and uncomment engine creation.
-    """
-    if _session_factory is None:
-        init_database()
-    
-    if _session_factory is None:
-        raise RuntimeError(
-            "Database session factory not initialized. "
-            "Configure DB_PASSWORD in .env for direct DB access, "
-            "or use REST API via supabase_client.py"
+        db_url = (
+            f"postgresql+asyncpg://"
+            f"{settings.supabase_user}:"
+            f"{settings.supabase_password}@"
+            f"{settings.supabase_host}:"
+            f"{settings.supabase_port}/"
+            f"{settings.supabase_db}"
         )
+        
+        try:
+            # Создать async engine с оптимальными настройками
+            self._engine = create_async_engine(
+                db_url,
+                echo=settings.database_echo,  # Логирование SQL запросов
+                pool_size=20,  # Размер connection pool
+                max_overflow=10,  # Максимум доп. соединений
+                pool_pre_ping=True,  # Проверять соединения перед использованием
+                pool_recycle=3600,  # Переиспользовать соединения каждый час
+                # Использовать QueuePool для production, NullPool для тестов
+                poolclass=NullPool if settings.environment == "test" else QueuePool,
+            )
+            
+            # Создать session factory
+            self._session_maker = async_sessionmaker(
+                self._engine,
+                class_=AsyncSession,
+                expire_on_commit=False,
+                autoflush=False,
+                autocommit=False,
+            )
+            
+            logger.info(
+                f"✓ Database connection initialized",
+                extra={"host": settings.supabase_host, "db": settings.supabase_db}
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize database: {e}")
+            raise
     
-    async with _session_factory() as session:
-        yield session
+    async def close(self) -> None:
+        """Корректно закрыть все соединения."""
+        if self._engine:
+            await self._engine.dispose()
+            logger.info("✓ Database connections closed")
+    
+    async def get_session(self) -> AsyncGenerator[AsyncSession, None]:
+        """
+        Получить асинхронную сессию БД.
+        Использовать как dependency для других модулей.
+        
+        Пример:
+            async with db.get_session() as session:
+                user = await session.get(User, user_id)
+        """
+        if self._session_maker is None:
+            raise RuntimeError("DatabaseManager not initialized. Call initialize() first.")
+        
+        async with self._session_maker() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception as e:
+                await session.rollback()
+                logger.error(f"Database transaction error: {e}")
+                raise
+    
+    async def create_tables(self) -> None:
+        """Создать все таблицы (для development/testing)."""
+        if self._engine is None:
+            raise RuntimeError("DatabaseManager not initialized")
+        
+        async with self._engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+            logger.info("✓ All tables created")
+    
+    async def drop_tables(self) -> None:
+        """Удалить все таблицы (для cleaning между тестами)."""
+        if self._engine is None:
+            raise RuntimeError("DatabaseManager not initialized")
+        
+        async with self._engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+            logger.info("✓ All tables dropped")
+    
+    def is_initialized(self) -> bool:
+        """Проверить, инициализирован ли DatabaseManager."""
+        return self._engine is not None
+
+
+# Global instance
+db_manager = DatabaseManager()
 
 
 async def check_connection() -> bool:
@@ -111,10 +157,30 @@ async def check_connection() -> bool:
     Check database connection.
     
     Returns:
-        True if connection successful
+        True if connection successful (either direct PostgreSQL or REST API)
     """
     try:
-        # For REST API approach, we check via supabase_client
+        # Try direct DB connection first
+        if db_manager.is_initialized():
+            try:
+                # Use async generator properly
+                async for session in db_manager.get_session():
+                    try:
+                        # Simple query to test connection
+                        from sqlalchemy import text
+                        result = await session.execute(text("SELECT 1"))
+                        if result.scalar() == 1:
+                            logger.info("✓ Database connection check: OK (direct PostgreSQL)")
+                            return True
+                    finally:
+                        # Session is auto-committed/closed by the generator
+                        pass
+            except Exception as direct_error:
+                logger.warning(f"Direct PostgreSQL connection failed: {direct_error}")
+                logger.info("Falling back to REST API...")
+                # Continue to REST API fallback
+        
+        # Fallback to REST API
         from src.database.supabase_client import get_supabase_client
         
         client = await get_supabase_client()
@@ -124,7 +190,7 @@ async def check_connection() -> bool:
                 logger.info("✓ Database connection check: OK (via REST API)")
                 return True
             else:
-                logger.error("✗ Database connection check: Failed")
+                logger.error("✗ Database connection check: Failed (REST API)")
                 return False
         finally:
             await client.close()
@@ -138,12 +204,12 @@ if __name__ == "__main__":
     import asyncio
     
     async def test():
-        init_database()
+        await db_manager.initialize()
         result = await check_connection()
         if result:
             print("✓ Database connection successful")
         else:
             print("✗ Database connection failed")
+        await db_manager.close()
     
     asyncio.run(test())
-
