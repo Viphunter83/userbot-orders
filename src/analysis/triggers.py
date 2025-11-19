@@ -19,7 +19,7 @@ class TriggerPattern(TypedDict):
 
 BACKEND_PATTERNS: dict[str, TriggerPattern] = {
     "python_dev": {
-        "pattern": r"(?:нужен|ищ[уемся]*|требуется|в поиск[еи])\s+(?:опытн[ый]*)?\s*(?:python|питон)[.-]?(?:разработчик|программист|специалист|developer|engineer)",
+        "pattern": r"(?:нужен|ищ[уемся]*|требуется|в поиск[еи])\s+(?:опытн[ый]*\s+)?(?:python|питон)[.-]?\s*(?:разработчик|программист|специалист|developer|engineer)",
         "confidence": 0.95,
         "description": "Python разработчик (явное указание)"
         # Examples: "нужен Python разработчик", "ищем питон-программиста", "требуется опытный Python-специалист"
