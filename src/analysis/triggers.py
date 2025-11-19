@@ -46,6 +46,28 @@ BACKEND_PATTERNS: dict[str, TriggerPattern] = {
         # Examples: "настройка вебхуков", "интеграция с API", "webhook для нашего сервиса"
     },
     
+    "chatbot_dev": {
+        "pattern": r"(?:чат[-\s]?бот|chatbot|chat\s*bot|телеграм[-\s]?бот|telegram\s*bot|бот[-\s]?для|разработка\s+бота|создание\s+бота)",
+        "confidence": 0.92,
+        "description": "Разработка чат-ботов"
+        # Examples: "нужен разработчик чат-бота", "создание Telegram бота", "#чатбот"
+    },
+    
+    "getcourse_integration": {
+        "pattern": r"(?:getcourse|get\s*course|геткурс|интеграция\s+getcourse|getcourse\s+разработка)",
+        "confidence": 0.91,
+        "description": "GetCourse интеграция и разработка"
+        # Examples: "нужна интеграция GetCourse", "#getcourse", "разработка на GetCourse"
+    },
+    
+    "technical_specialist": {
+        "pattern": r"(?:технический\s+специалист|техспец|тех\s+специалист|тех\s+спец)",
+        "confidence": 0.85,
+        "description": "Технический специалист (общий)"
+        # Examples: "ищем технического специалиста", "#техспец", "нужен тех спец"
+        # Note: confidence 0.85 < 0.80 threshold, будет отправлено в LLM для уточнения
+    },
+    
     "database_dev": {
         "pattern": r"(?:база\s*данных|database|postgresql|mysql|mongodb|redis|оптимизация\s+postgresql|postgresql\s+базы)",
         "confidence": 0.85,
@@ -187,6 +209,13 @@ AI_ML_PATTERNS: dict[str, TriggerPattern] = {
         "confidence": 0.90,
         "description": "ChatGPT / OpenAI интеграция"
         # Examples: "интеграция ChatGPT", "нужна помощь с интеграцией ChatGPT в наш проект"
+    },
+    
+    "chatbot_ai": {
+        "pattern": r"(?:чат[-\s]?бот|chatbot|chat\s*bot).*?(?:на\s+базе|с\s+использованием|с\s+помощью|на|для).*?(?:ai|ии|chatgpt|gpt|нейросеть)",
+        "confidence": 0.89,
+        "description": "AI чат-боты"
+        # Examples: "чат-бот на базе ChatGPT", "создание AI бота"
     },
     
     "automation_business": {

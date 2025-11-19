@@ -170,7 +170,18 @@ class TelegramClient:
                 
                 # Skip empty messages (check both text and caption)
                 if not message.text and not message.caption:
-                    logger.debug(f"Skipping empty message from chat {chat_id}")
+                    # Логируем пропуск пустых сообщений для отладки
+                    author_info = "Unknown"
+                    if message.from_user:
+                        author_info = f"{message.from_user.first_name} (@{message.from_user.username or 'no username'})"
+                        if message.from_user.is_bot:
+                            author_info += " [BOT]"
+                    
+                    logger.debug(
+                        f"Skipping empty message from chat {chat_id} "
+                        f"(author: {author_info}, has_media: {bool(message.media)}, "
+                        f"media_type: {type(message.media).__name__ if message.media else 'None'})"
+                    )
                     return
                 
                 # Validate chat ID
@@ -191,17 +202,29 @@ class TelegramClient:
                     else:
                         logger.info(f"✓ Chat {chat_title} ({chat_id}) IS monitored, processing message")
                 
+                # Детальная информация о сообщении для отладки
+                author_info = "Unknown"
+                is_bot = False
+                if message.from_user:
+                    author_info = f"{message.from_user.first_name} (@{message.from_user.username or 'no username'})"
+                    is_bot = message.from_user.is_bot
+                
+                message_preview = (message.text or message.caption or "[No text]")[:100]
+                
+                # Детальное логирование для отладки
                 logger.info(
-                    f"📨 Message received from chat {chat_id}",
-                    extra={
-                        "chat_id": chat_id,
-                        "author": message.from_user.first_name if message.from_user else "Unknown",
-                        "text": message.text[:100],
-                    }
+                    f"📨 Message received from chat {chat_id} | "
+                    f"Author: {author_info} {'[BOT]' if is_bot else '[USER]'} | "
+                    f"Text length: {len(message.text or message.caption or '')} | "
+                    f"Preview: {message_preview}"
                 )
                 
+                # Важно: передать сообщение в callback только если есть текст или caption
                 if self.message_callback:
-                    await self.message_callback(message)
+                    try:
+                        await self.message_callback(message)
+                    except Exception as callback_error:
+                        logger.error(f"Error in message callback: {callback_error}", exc_info=True)
             except ValueError as ve:
                 # Skip invalid peer IDs
                 logger.debug(f"Skipping message with invalid peer: {ve}")

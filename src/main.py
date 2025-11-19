@@ -71,13 +71,32 @@ class UserbotApp:
         """
         try:
             # Extract message information
-            message_text = message.text or message.caption or "[No text]"
+            message_text = message.text or message.caption or ""
+            
+            # Если сообщение пустое, пропустить (но логировать для отладки)
+            if not message_text or len(message_text.strip()) < 1:
+                author_info = "Unknown"
+                is_bot = False
+                if message.from_user:
+                    author_info = f"{message.from_user.first_name} (@{message.from_user.username or 'no username'})"
+                    is_bot = message.from_user.is_bot
+                
+                logger.debug(
+                    f"⚠️  Skipping message without text from chat {message.chat.id} | "
+                    f"Author: {author_info} {'[BOT]' if is_bot else '[USER]'} | "
+                    f"Has media: {bool(message.media)} | "
+                    f"Media type: {type(message.media).__name__ if message.media else 'None'}"
+                )
+                return
+            
             author_id = message.from_user.id if message.from_user else None
             author_username = (
                 message.from_user.username 
                 if message.from_user and message.from_user.username 
-                else "unknown"
+                else (message.from_user.first_name if message.from_user else "unknown")
             )
+            is_bot = message.from_user.is_bot if message.from_user else False
+            
             chat_id = message.chat.id
             chat_title = message.chat.title or "Private Chat"
             message_date = message.date
@@ -85,10 +104,10 @@ class UserbotApp:
             # Format time
             time_str = message_date.strftime("%Y-%m-%d %H:%M")
             
-            # Log message
+            # Log message with more details
             logger.info(
                 f"New Telegram message: '{message_text[:100]}...' | "
-                f"Author: {author_username} ({author_id}) | "
+                f"Author: {author_username} ({author_id}) {'[BOT]' if is_bot else '[USER]'} | "
                 f"Chat: {chat_title} ({chat_id}) | "
                 f"Time: {time_str}"
             )
@@ -155,7 +174,17 @@ class UserbotApp:
                     logger.error(f"Error saving message to database: {e}", exc_info=True)
             
             # Analyze message with regex analyzer (first level filter)
+            logger.debug(f"  🔍 Analyzing message with regex analyzer (length: {len(message_text)} chars)")
             detection_result = self.regex_analyzer.analyze(message_text)
+            
+            if detection_result:
+                logger.debug(
+                    f"  📊 Regex analyzer result: category={detection_result.category.value}, "
+                    f"confidence={detection_result.confidence:.2f}, "
+                    f"pattern={detection_result.matched_pattern}"
+                )
+            else:
+                logger.debug("  📊 Regex analyzer: No match found")
             
             # If regex found high-confidence match, use it directly
             if detection_result and detection_result.confidence >= 0.80:
@@ -223,12 +252,29 @@ class UserbotApp:
             # Use LLM if regex didn't find anything OR found low-confidence match
             elif not detection_result or detection_result.confidence < 0.80:
                 # Only analyze messages that are long enough and might be orders
-                if len(message_text.strip()) > 20:  # Skip very short messages
+                message_length = len(message_text.strip())
+                logger.debug(f"  🔍 Considering LLM analysis: message_length={message_length}, threshold=20")
+                
+                if message_length > 20:  # Skip very short messages
                     try:
                         from src.analysis.llm_classifier import llm_classifier
                         
-                        logger.debug("  → Sending to LLM for analysis (ambiguous or no regex match)")
+                        logger.info(
+                            f"  → Sending to LLM for analysis "
+                            f"(regex: {'no match' if not detection_result else f'low confidence ({detection_result.confidence:.2f})'})"
+                        )
+                        logger.debug(f"  📝 Message preview for LLM: {message_text[:200]}...")
                         llm_result = await llm_classifier.classify(message_text)
+                        
+                        if llm_result:
+                            logger.debug(
+                                f"  📊 LLM result: is_order={llm_result.is_order}, "
+                                f"category={llm_result.category}, "
+                                f"relevance_score={llm_result.relevance_score:.2f}, "
+                                f"threshold={llm_classifier.threshold:.2f}"
+                            )
+                        else:
+                            logger.debug("  📊 LLM result: None (no response or error)")
                         
                         if llm_result and llm_result.is_order and llm_result.relevance_score >= llm_classifier.threshold:
                             logger.info(
