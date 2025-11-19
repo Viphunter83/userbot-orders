@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  # Supabase (PostgreSQL) - для локальной разработки
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: userbot_orders
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Bot application
+  bot:
+    build: .
+    environment:
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
+      TELEGRAM_PHONE: ${TELEGRAM_PHONE}
+      SUPABASE_URL: postgresql://postgres:postgres@postgres:5432/userbot_orders
+      SUPABASE_USER: postgres
+      SUPABASE_PASSWORD: postgres
+      SUPABASE_HOST: postgres
+      SUPABASE_PORT: 5432
+      SUPABASE_DB: userbot_orders
+      LLM_API_KEY: ${LLM_API_KEY}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    networks:
+      - default
+
+volumes:
+  postgres_data:
+
+networks:
+  default:
+    driver: bridge
+

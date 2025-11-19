@@ -1,7 +1,8 @@
-"""Main entry point for Telegram userbot."""
+"""Main entry point for userbot-orders system."""
 
 import asyncio
 import signal
+import sys
 from datetime import datetime
 from typing import Optional
 from pathlib import Path
@@ -23,11 +24,18 @@ from src.stats.reporter import MetricsReporter
 from src.stats.metrics import MetricsCalculator
 
 # Create Typer app
-app = typer.Typer(help="Telegram Userbot for Order Monitoring")
-export_app = typer.Typer(help="Export commands")
-stats_app = typer.Typer(help="Stats and analytics commands")
+app = typer.Typer(
+    help="🤖 Telegram Orders Bot — AI-powered order detection system",
+    no_args_is_help=True,
+)
+export_app = typer.Typer(help="📤 Export commands")
+stats_app = typer.Typer(help="📊 Stats and analytics commands")
+admin_app = typer.Typer(help="⚙️  Admin commands")
+chat_app = typer.Typer(help="💬 Chat management commands")
 app.add_typer(export_app, name="export")
 app.add_typer(stats_app, name="stats")
+app.add_typer(admin_app, name="admin")
+app.add_typer(chat_app, name="chat")
 
 
 class UserbotApp:
@@ -285,7 +293,7 @@ class UserbotApp:
         except Exception as e:
             logger.error(f"Error processing message: {e}")
     
-    async def start(self) -> None:
+    async def start(self, monitor_all: bool = False) -> None:
         """Start the userbot application."""
         try:
             # Store loop for signal handler
@@ -298,6 +306,23 @@ class UserbotApp:
             logger.info("=" * 60)
             logger.info("Starting Telegram Userbot for Order Monitoring")
             logger.info("=" * 60)
+            
+            # Initialize chat config if not monitoring all
+            if not monitor_all:
+                from src.config.chat_config import chat_config_manager
+                chat_config_manager.initialize()
+                active_chats = chat_config_manager.get_active_chats()
+                
+                if not active_chats:
+                    logger.warning("⚠️  No chats configured for monitoring!")
+                    logger.info("Run 'python -m src.main chat auto-detect' to add chats")
+                    return
+                
+                logger.info(f"📊 Monitoring {len(active_chats)} chats:")
+                for config in active_chats:
+                    logger.info(f"  • {config.chat_name} (priority: {config.priority})")
+            else:
+                logger.warning("⚠️  Monitoring ALL chats (ignoring config)")
             
             # Initialize database connection
             try:
@@ -324,7 +349,7 @@ class UserbotApp:
             # This will block until interrupted
             # Run listen_messages in background and wait for shutdown event
             listen_task = asyncio.create_task(
-                self.client.listen_messages(self.message_handler)
+                self.client.listen_messages(self.message_handler, filter_chats=not monitor_all)
             )
             
             # Wait for shutdown signal
@@ -361,6 +386,19 @@ class UserbotApp:
                 logger.info("✓ Database connections closed")
             except Exception as e:
                 logger.error(f"Error closing database: {e}")
+        
+        # Вывести финальные метрики LLM
+        try:
+            from src.analysis.llm_classifier import llm_classifier
+            if hasattr(llm_classifier, 'get_metrics'):
+                metrics = llm_classifier.get_metrics()
+                logger.info(
+                    f"LLM Stats: {metrics.get('total_requests', 0)} requests, "
+                    f"{metrics.get('total_tokens_used', 0)} tokens, "
+                    f"${metrics.get('total_cost_usd', 0.0):.2f} cost"
+                )
+        except Exception as e:
+            logger.debug(f"Could not get LLM metrics: {e}")
         
         logger.info("✓ Userbot stopped")
 
@@ -437,11 +475,30 @@ def html(
 
 
 @app.command()
-def start():
-    """Запустить Telegram userbot."""
+def start(
+    monitor_all: bool = typer.Option(
+        False,
+        "--all",
+        help="Monitor ALL chats (ignore config)"
+    ),
+):
+    """
+    ▶️  Запустить userbot для мониторинга Telegram.
+    
+    По умолчанию мониторит только сконфигурированные чаты.
+    Используй --all для мониторинга всех чатов.
+    
+    Процесс:
+    1. Подключиться к Telegram
+    2. Мониторить входящие сообщения
+    3. Анализировать через Regex (быстро)
+    4. Анализировать через LLM (для ambiguous)
+    5. Сохранять в Supabase
+    6. Выводить результаты
+    """
     async def _start():
         userbot_app = UserbotApp()
-        await userbot_app.start()
+        await userbot_app.start(monitor_all=monitor_all)
     
     try:
         asyncio.run(_start())
@@ -564,7 +621,280 @@ def summary(
     asyncio.run(_show_summary())
 
 
+# ============================================================================
+# ADMIN COMMANDS
+# ============================================================================
+
+@admin_app.command()
+def init_db():
+    """Инициализировать БД (создать таблицы)."""
+    async def _init_database():
+        logger.info("Initializing database...")
+        
+        await db_manager.initialize()
+        await db_manager.create_tables()
+        
+        logger.info("✓ Database initialized with all tables")
+        await db_manager.close()
+    
+    asyncio.run(_init_database())
+
+
+@admin_app.command()
+def test_connection():
+    """Проверить подключение к Supabase."""
+    async def _test_db_connection():
+        logger.info("Testing database connection...")
+        
+        try:
+            await db_manager.initialize()
+            
+            async for session in db_manager.get_session():
+                try:
+                    # Простой query для проверки
+                    from sqlalchemy import text
+                    await session.execute(text("SELECT 1"))
+                    await session.commit()
+                finally:
+                    break
+            
+            logger.info("✓ Database connection successful")
+        
+        except Exception as e:
+            logger.error(f"❌ Database connection failed: {e}")
+            raise
+        
+        finally:
+            await db_manager.close()
+    
+    asyncio.run(_test_db_connection())
+
+
+# ============================================================================
+# CHAT MANAGEMENT COMMANDS
+# ============================================================================
+
+@chat_app.command()
+def list():
+    """Показать все чаты (активные и неактивные)."""
+    from src.config.chat_config import chat_config_manager
+    from rich.console import Console
+    from rich.table import Table
+    
+    console = Console()
+    chat_config_manager.initialize()
+    
+    all_chats = chat_config_manager.get_all_chats()
+    
+    if not all_chats:
+        console.print("[yellow]No chats configured yet[/]")
+        return
+    
+    table = Table(title="📋 Monitored Chats", show_header=True)
+    table.add_column("Status", style="cyan")
+    table.add_column("Chat Name", style="green")
+    table.add_column("Chat ID", style="blue")
+    table.add_column("Type", style="magenta")
+    table.add_column("Priority", style="yellow")
+    table.add_column("Since", style="dim")
+    
+    for config in sorted(all_chats, key=lambda c: c.priority, reverse=True):
+        status = "🟢 Active" if config.is_active else "🔴 Inactive"
+        since = config.enabled_at.strftime("%Y-%m-%d") if config.enabled_at else "N/A"
+        
+        table.add_row(
+            status,
+            config.chat_name,
+            config.chat_id,
+            config.chat_type,
+            str(config.priority),
+            since,
+        )
+    
+    console.print(table)
+    console.print(f"\n[dim]Active chats: {len(chat_config_manager.get_active_chats())} / {len(all_chats)}[/]")
+
+
+@chat_app.command()
+def add(
+    chat_id: str = typer.Argument(..., help="Chat ID (negative number for groups)"),
+    chat_name: str = typer.Option(..., "--name", help="Chat name/title"),
+    chat_type: str = typer.Option("group", help="Chat type: group, channel, supergroup"),
+    priority: int = typer.Option(1, help="Priority 1-5 (5=highest)"),
+):
+    """Добавить чат в список мониторинга."""
+    from src.config.chat_config import chat_config_manager
+    
+    chat_config_manager.initialize()
+    
+    # Валидация
+    if not 1 <= priority <= 5:
+        typer.echo("❌ Priority must be 1-5")
+        return
+    
+    if chat_type not in ["group", "channel", "supergroup"]:
+        typer.echo("❌ Chat type must be: group, channel, or supergroup")
+        return
+    
+    config = chat_config_manager.add_chat(chat_id, chat_name, chat_type, priority)
+    typer.echo(f"✓ Added: {config}")
+
+
+@chat_app.command()
+def remove(
+    chat_id: str = typer.Argument(..., help="Chat ID to remove"),
+    reason: str = typer.Option("", help="Reason for removal"),
+):
+    """Отключить чат от мониторинга."""
+    from src.config.chat_config import chat_config_manager
+    
+    chat_config_manager.initialize()
+    
+    if chat_config_manager.remove_chat(chat_id, reason or "Disabled by user"):
+        typer.echo(f"✓ Removed chat {chat_id}")
+    else:
+        typer.echo(f"❌ Chat {chat_id} not found")
+
+
+@chat_app.command()
+def enable(
+    chat_id: str = typer.Argument(..., help="Chat ID to enable"),
+):
+    """Включить мониторинг чата."""
+    from src.config.chat_config import chat_config_manager
+    
+    chat_config_manager.initialize()
+    
+    if chat_config_manager.enable_chat(chat_id):
+        typer.echo(f"✓ Enabled chat {chat_id}")
+    else:
+        typer.echo(f"❌ Chat {chat_id} not found")
+
+
+@chat_app.command()
+def disable(
+    chat_id: str = typer.Argument(..., help="Chat ID to disable"),
+    reason: str = typer.Option("", help="Reason"),
+):
+    """Отключить мониторинг чата."""
+    from src.config.chat_config import chat_config_manager
+    
+    chat_config_manager.initialize()
+    
+    if chat_config_manager.disable_chat(chat_id, reason):
+        typer.echo(f"✓ Disabled chat {chat_id}")
+    else:
+        typer.echo(f"❌ Chat {chat_id} not found")
+
+
+@chat_app.command()
+def priority(
+    chat_id: str = typer.Argument(..., help="Chat ID"),
+    level: int = typer.Argument(..., help="Priority level 1-5"),
+):
+    """Установить приоритет чата."""
+    from src.config.chat_config import chat_config_manager
+    
+    chat_config_manager.initialize()
+    
+    if chat_config_manager.set_priority(chat_id, level):
+        typer.echo(f"✓ Set priority {level} for chat {chat_id}")
+    else:
+        typer.echo(f"❌ Failed to set priority")
+
+
+@chat_app.command()
+def auto_detect():
+    """Автоматически обнаружить все чаты (интерактивно)."""
+    async def _auto_detect():
+        from src.config.chat_config import chat_config_manager
+        
+        chat_config_manager.initialize()
+        
+        # Инициализировать Telegram
+        telegram_client = TelegramClient()
+        await telegram_client.start()
+        
+        # Обнаружить чаты
+        detected = await telegram_client.auto_detect_chats()
+        
+        if not detected:
+            typer.echo("No chats found")
+            await telegram_client.stop()
+            return
+        
+        # Показать найденные чаты
+        from rich.console import Console
+        from rich.table import Table
+        
+        console = Console()
+        
+        table = Table(title="🔍 Detected Chats", show_header=True)
+        table.add_column("№", style="cyan")
+        table.add_column("Chat Name", style="green")
+        table.add_column("Chat ID", style="blue")
+        table.add_column("Type", style="magenta")
+        
+        for i, config in enumerate(detected, 1):
+            table.add_row(
+                str(i),
+                config.chat_name,
+                config.chat_id,
+                config.chat_type,
+            )
+        
+        console.print(table)
+        
+        # Интерактивный выбор
+        console.print("\n[bold]Add to monitoring? Enter numbers separated by comma (e.g., 1,3,5)[/]")
+        selection = console.input("[bold cyan]→[/] ").strip()
+        
+        if selection:
+            try:
+                selected_indices = [int(x.strip()) - 1 for x in selection.split(",")]
+                
+                added_count = 0
+                for idx in selected_indices:
+                    if 0 <= idx < len(detected):
+                        config = detected[idx]
+                        chat_config_manager.add_chat(
+                            config.chat_id,
+                            config.chat_name,
+                            config.chat_type,
+                            priority=1,
+                        )
+                        added_count += 1
+                
+                console.print(f"\n✓ Added {added_count} chats to monitoring")
+            
+            except ValueError:
+                console.print("[red]Invalid input[/]")
+        
+        await telegram_client.stop()
+    
+    asyncio.run(_auto_detect())
+
+
+@chat_app.command()
+def clear():
+    """Очистить все сконфигурированные чаты (осторожно!)."""
+    from src.config.chat_config import chat_config_manager
+    
+    chat_config_manager.initialize()
+    
+    confirm = typer.confirm("Are you sure you want to clear all chats? This cannot be undone!")
+    
+    if confirm:
+        chat_config_manager.clear_all()
+        typer.echo("✓ Cleared all chats")
+    else:
+        typer.echo("Cancelled")
+
+
+# ============================================================================
+# ENTRY POINT
+# ============================================================================
+
 if __name__ == "__main__":
-    # If run directly, use Typer CLI
     app()
 

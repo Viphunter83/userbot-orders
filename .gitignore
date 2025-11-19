@@ -45,6 +45,7 @@ data/
 logs/
 exports/
 test_exports/
+config/chats.json
 *.log
 *.db
 *.sqlite
