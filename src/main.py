@@ -10,6 +10,7 @@ from loguru import logger
 from src.telegram.client import TelegramClient
 from src.utils.logger import setup_logger
 from src.config.settings import get_settings
+from src.analysis.regex_analyzer import RegexAnalyzer
 
 
 class UserbotApp:
@@ -23,6 +24,7 @@ class UserbotApp:
         self.client: Optional[TelegramClient] = None
         self.shutdown_event = asyncio.Event()
         self.loop = None
+        self.regex_analyzer = RegexAnalyzer()
         
         logger.info("Userbot application initialized")
     
@@ -64,6 +66,18 @@ class UserbotApp:
                 f"Chat: {chat_title} ({chat_id}) | "
                 f"Time: {time_str}"
             )
+            
+            # Analyze message with regex analyzer (first level filter)
+            detection_result = self.regex_analyzer.analyze(message_text)
+            if detection_result:
+                logger.info(
+                    f"  ✓ Order detected: {detection_result.category.value} "
+                    f"(confidence: {detection_result.confidence:.2f}, "
+                    f"pattern: {detection_result.matched_pattern})"
+                )
+                logger.debug(f"  Matched text: '{detection_result.matched_text}'")
+            else:
+                logger.debug("  No order detected by regex")
             
             # Log additional metadata if available
             if message.forward_from_chat:

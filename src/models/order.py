@@ -1,9 +1,22 @@
 """Order data models."""
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, Field
 from uuid import UUID
+
+from src.models.enums import OrderCategory, DetectionMethod
+
+
+@dataclass
+class OrderDetectionResult:
+    """Результат детекции заказа."""
+    category: OrderCategory
+    confidence: float  # 0.0-1.0
+    detected_by: DetectionMethod
+    matched_pattern: str
+    matched_text: str
 
 
 class OrderAnalysis(BaseModel):
