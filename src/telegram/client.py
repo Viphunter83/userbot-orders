@@ -1,6 +1,7 @@
 """Telegram client using Pyrogram for userbot functionality."""
 
 import asyncio
+import logging
 from typing import Optional, Callable, Awaitable
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -15,6 +16,60 @@ from src.utils.logger import setup_logger
 # Suppress Pyrogram warnings about unhandled updates
 import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*Task exception was never retrieved.*")
+
+# Configure Pyrogram's internal logging to suppress socket errors
+# Pyrogram uses standard Python logging, so we need to filter it
+class SocketErrorFilter(logging.Filter):
+    """Filter to suppress socket.send() errors from Pyrogram."""
+    
+    def __init__(self):
+        super().__init__()
+        self._error_counts = defaultdict(int)
+        self._error_last_logged = defaultdict(lambda: datetime.min)
+        self._log_interval = timedelta(seconds=30)
+    
+    def filter(self, record):
+        """Filter log records to suppress repetitive socket errors."""
+        message = record.getMessage()
+        now = datetime.now()
+        
+        # Suppress socket.send() errors
+        if "socket.send()" in message or ("socket" in message.lower() and "raised exception" in message.lower()):
+            error_key = "socket_send"
+            self._error_counts[error_key] += 1
+            
+            # Log only occasionally
+            if (now - self._error_last_logged[error_key]) > self._log_interval:
+                count = self._error_counts[error_key]
+                # Use loguru to log at debug level
+                logger.debug(f"Pyrogram socket error (occurred {count} times) - this is normal during network fluctuations")
+                self._error_last_logged[error_key] = now
+                self._error_counts[error_key] = 0
+            
+            # Suppress the original log message
+            return False
+        
+        # Suppress "Connection lost" messages
+        if "Connection lost" in message or ("Connection" in message and "lost" in message.lower()):
+            error_key = "connection_lost"
+            self._error_counts[error_key] += 1
+            
+            if (now - self._error_last_logged[error_key]) > self._log_interval:
+                count = self._error_counts[error_key]
+                logger.debug(f"Pyrogram connection lost (occurred {count} times) - automatic reconnection in progress")
+                self._error_last_logged[error_key] = now
+                self._error_counts[error_key] = 0
+            
+            return False
+        
+        # Allow all other messages
+        return True
+
+# Apply filter to Pyrogram's logger
+_pyrogram_logger = logging.getLogger("pyrogram")
+_pyrogram_logger.addFilter(SocketErrorFilter())
+# Set Pyrogram logger to WARNING level to reduce noise, but our filter will handle socket errors
+_pyrogram_logger.setLevel(logging.WARNING)
 
 
 class TelegramClient:
