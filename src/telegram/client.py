@@ -2,7 +2,8 @@
 
 import asyncio
 from typing import Optional, Callable, Awaitable
-from datetime import datetime
+from datetime import datetime, timedelta
+from collections import defaultdict
 from pyrogram import Client
 from pyrogram.types import Message
 from pyrogram.errors import AuthKeyUnregistered, SessionPasswordNeeded
@@ -33,6 +34,11 @@ class TelegramClient:
         self.is_running = False
         self.message_callback: Optional[Callable[[Message], Awaitable[None]]] = None
         
+        # Error tracking for rate limiting logs
+        self._error_counts = defaultdict(int)
+        self._error_last_logged = defaultdict(lambda: datetime.min)
+        self._error_log_interval = timedelta(seconds=30)  # Log same error max once per 30 seconds
+        
         # Setup logger
         setup_logger(log_level=settings.log_level)
         
@@ -56,13 +62,18 @@ class TelegramClient:
             await self.client.start()
             
             # Set up exception handler for asyncio tasks to catch Pyrogram internal errors
+            client_instance = self  # Capture self for use in nested function
+            
             def exception_handler(loop, context):
-                """Handle unhandled exceptions in asyncio tasks."""
+                """Handle unhandled exceptions in asyncio tasks with rate limiting."""
                 exception = context.get('exception')
                 message = context.get('message', '')
+                now = datetime.now()
                 
                 if exception:
                     error_str = str(exception)
+                    error_key = f"exception_{type(exception).__name__}"
+                    
                     # Ignore invalid peer ID errors
                     if isinstance(exception, ValueError) and "Peer id invalid" in error_str:
                         logger.debug(f"Skipping update with invalid peer ID: {error_str}")
@@ -74,17 +85,65 @@ class TelegramClient:
                     if "closed database" in error_str.lower() or "cannot operate" in error_str.lower():
                         logger.debug(f"Ignoring database closed error: {error_str}")
                         return
-                    # Log other exceptions
-                    if "Peer id invalid" not in error_str and "ID not found" not in error_str:
-                        logger.warning(f"Unhandled exception in asyncio task: {exception}")
-                else:
-                    # Filter out socket.send() errors during shutdown
-                    if "socket.send()" in message or ("socket" in message.lower() and "exception" in message.lower()):
-                        logger.debug(f"Ignoring socket error during shutdown: {message}")
+                    
+                    # Handle socket errors silently (they're common during connection issues)
+                    if "socket" in error_str.lower() or "connection" in error_str.lower():
+                        client_instance._error_counts[error_key] += 1
+                        # Log only occasionally to avoid spam
+                        if (now - client_instance._error_last_logged[error_key]) > client_instance._error_log_interval:
+                            count = client_instance._error_counts[error_key]
+                            logger.debug(f"Connection issue (occurred {count} times): {error_str[:100]}")
+                            client_instance._error_last_logged[error_key] = now
+                            client_instance._error_counts[error_key] = 0  # Reset counter
                         return
-                    # Log other context errors
+                    
+                    # Log other exceptions with rate limiting
+                    if "Peer id invalid" not in error_str and "ID not found" not in error_str:
+                        client_instance._error_counts[error_key] += 1
+                        if (now - client_instance._error_last_logged[error_key]) > client_instance._error_log_interval:
+                            count = client_instance._error_counts[error_key]
+                            if count > 1:
+                                logger.warning(f"Unhandled exception (occurred {count} times): {exception}")
+                            else:
+                                logger.warning(f"Unhandled exception in asyncio task: {exception}")
+                            client_instance._error_last_logged[error_key] = now
+                            client_instance._error_counts[error_key] = 0
+                else:
+                    # Handle socket.send() errors silently (common during connection issues)
+                    if "socket.send()" in message or ("socket" in message.lower() and "exception" in message.lower()):
+                        error_key = "socket_send"
+                        client_instance._error_counts[error_key] += 1
+                        # Log only occasionally to avoid spam
+                        if (now - client_instance._error_last_logged[error_key]) > client_instance._error_log_interval:
+                            count = client_instance._error_counts[error_key]
+                            logger.debug(f"Socket connection issue (occurred {count} times) - this is normal during network fluctuations")
+                            client_instance._error_last_logged[error_key] = now
+                            client_instance._error_counts[error_key] = 0
+                        return
+                    
+                    # Handle "Connection lost" errors silently
+                    if "Connection lost" in message or ("Connection" in message and "lost" in message.lower()):
+                        error_key = "connection_lost"
+                        client_instance._error_counts[error_key] += 1
+                        if (now - client_instance._error_last_logged[error_key]) > client_instance._error_log_interval:
+                            count = client_instance._error_counts[error_key]
+                            logger.debug(f"Connection lost (occurred {count} times) - Pyrogram will automatically reconnect")
+                            client_instance._error_last_logged[error_key] = now
+                            client_instance._error_counts[error_key] = 0
+                        return
+                    
+                    # Log other context errors with rate limiting
                     if "Peer id invalid" not in message and "ID not found" not in message:
-                        logger.warning(f"Asyncio context error: {message}")
+                        error_key = f"context_{message[:50]}"
+                        client_instance._error_counts[error_key] += 1
+                        if (now - client_instance._error_last_logged[error_key]) > client_instance._error_log_interval:
+                            count = client_instance._error_counts[error_key]
+                            if count > 1:
+                                logger.warning(f"Asyncio context error (occurred {count} times): {message}")
+                            else:
+                                logger.warning(f"Asyncio context error: {message}")
+                            client_instance._error_last_logged[error_key] = now
+                            client_instance._error_counts[error_key] = 0
             
             # Set exception handler for current event loop
             loop = asyncio.get_event_loop()
