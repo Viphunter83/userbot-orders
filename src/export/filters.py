@@ -1,6 +1,6 @@
 """Export filters for orders."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from dataclasses import dataclass
 
@@ -28,6 +28,17 @@ class OrderFilter:
     """Применять фильтры к списку заказов."""
     
     @staticmethod
+    def _normalize_datetime(dt: datetime) -> datetime:
+        """
+        Нормализовать datetime для сравнения.
+        Если naive - преобразует в UTC-aware, если aware - оставляет как есть.
+        """
+        if dt.tzinfo is None:
+            # Naive datetime - преобразуем в UTC-aware
+            return dt.replace(tzinfo=timezone.utc)
+        return dt
+    
+    @staticmethod
     def apply(orders: List[Order], filter_params: ExportFilter) -> List[Order]:
         """
         Применить фильтры к списку заказов.
@@ -43,9 +54,28 @@ class OrderFilter:
         
         # Фильтр по датам
         if filter_params.start_date:
-            result = [o for o in result if o.created_at >= filter_params.start_date]
+            # Нормализовать даты для сравнения (преобразовать naive в aware или наоборот)
+            start_date = filter_params.start_date
+            if start_date.tzinfo is None:
+                # Если naive, преобразуем в UTC-aware
+                start_date = start_date.replace(tzinfo=timezone.utc)
+            
+            result = [
+                o for o in result
+                if OrderFilter._normalize_datetime(o.created_at) >= start_date
+            ]
+        
         if filter_params.end_date:
-            result = [o for o in result if o.created_at <= filter_params.end_date]
+            # Нормализовать даты для сравнения
+            end_date = filter_params.end_date
+            if end_date.tzinfo is None:
+                # Если naive, преобразуем в UTC-aware
+                end_date = end_date.replace(tzinfo=timezone.utc)
+            
+            result = [
+                o for o in result
+                if OrderFilter._normalize_datetime(o.created_at) <= end_date
+            ]
         
         # Фильтр по категориям
         if filter_params.categories:
