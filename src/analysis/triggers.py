@@ -34,10 +34,17 @@ BACKEND_PATTERNS: dict[str, TriggerPattern] = {
     },
     
     "backend_dev": {
-        "pattern": r"(?:разработка\s+бэкенда|разработчик\s+на\s+бэк|специалист\s+на\s+python|бэкенд\s+разработчик)",
+        "pattern": r"(?:разработка\s+бэкенда|разработчик\s+на\s+бэк|специалист\s+на\s+python|бэкенд\s+разработчик|backend[-\s]?разработчик|backend[-\s]?developer)",
         "confidence": 0.92,
         "description": "Backend разработка"
-        # Examples: "разработка бэкенда", "разработчик на бэк"
+        # Examples: "разработка бэкенда", "разработчик на бэк", "backend-разработчик"
+    },
+    
+    "junior_backend": {
+        "pattern": r"(?:junior\s+backend[-\s]?разработчик|junior\s+backend[-\s]?developer|junior\s+бэкенд[-\s]?разработчик)",
+        "confidence": 0.90,
+        "description": "Junior Backend разработчик"
+        # Examples: "Junior backend-разработчик", "Junior backend developer"
     },
     
     "fullstack_dev": {

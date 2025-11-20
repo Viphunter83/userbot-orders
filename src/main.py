@@ -112,66 +112,55 @@ class UserbotApp:
                 f"Time: {time_str}"
             )
             
-            # Save message to database if DB is initialized
-            if self.db_initialized:
-                try:
-                    # Use async generator properly
-                    async for session in db_manager.get_session():
-                        try:
-                            chat_repo = ChatRepository(session)
-                            message_repo = MessageRepository(session)
-                            
-                            # Ensure chat exists
-                            chat = await chat_repo.get_by_id(str(chat_id))
-                            if not chat:
-                                # Determine chat type
-                                chat_type = "channel"  # Default
-                                if hasattr(message.chat, 'type'):
-                                    chat_type_str = str(message.chat.type)
-                                    if chat_type_str == "group":
-                                        chat_type = "group"
-                                    elif chat_type_str == "supergroup":
-                                        chat_type = "supergroup"
-                                    elif chat_type_str == "channel":
-                                        chat_type = "channel"
-                                    else:
-                                        # Fallback: try to get from chat config
-                                        from src.config.chat_config import chat_config_manager
-                                        chat_config = chat_config_manager.get_chat_config(str(chat_id))
-                                        if chat_config:
-                                            chat_type = chat_config.chat_type
-                                        else:
-                                            logger.warning(f"Unknown chat type: {chat_type_str}, defaulting to 'group'")
-                                            chat_type = "group"
-                                
-                                chat = await chat_repo.create(
-                                    chat_id=str(chat_id),
-                                    chat_name=chat_title[:255],  # Limit length
-                                    chat_type=chat_type
-                                )
-                            
-                            # Save message (метод create сам проверяет на дубликаты)
-                            message_id_str = str(message.id)
-                            saved_message = await message_repo.create(
-                                message_id=message_id_str,
-                                chat_id=str(chat_id),
-                                author_id=str(author_id) if author_id else "unknown",
-                                author_name=author_username[:255] if author_username else None,
-                                text=message_text[:10000] if len(message_text) > 10000 else message_text,  # Limit text length
-                                timestamp=message_date,
-                            )
-                            
-                            if saved_message:
-                                # Update chat's last message time только если сообщение было создано
-                                await chat_repo.update_last_message_time(str(chat_id))
-                                logger.debug(f"  Message saved to database: {message_id_str}")
-                            else:
-                                logger.debug(f"  Message already exists in database: {message_id_str}")
-                        finally:
-                            # Session will be auto-committed/closed by generator
-                            break
-                except Exception as e:
-                    logger.error(f"Error saving message to database: {e}", exc_info=True)
+            # Save message to database with fallback mechanism
+            message_id_str = str(message.id)
+            
+            # Определить chat_type для создания чата если нужно
+            chat_type = "channel"  # Default
+            if hasattr(message.chat, 'type'):
+                chat_type_str = str(message.chat.type)
+                if chat_type_str == "group":
+                    chat_type = "group"
+                elif chat_type_str == "supergroup":
+                    chat_type = "supergroup"
+                elif chat_type_str == "channel":
+                    chat_type = "channel"
+                else:
+                    # Fallback: try to get from chat config
+                    from src.config.chat_config import chat_config_manager
+                    chat_config = chat_config_manager.get_chat_config(str(chat_id))
+                    if chat_config:
+                        chat_type = chat_config.chat_type
+                    else:
+                        logger.debug(f"Unknown chat type: {chat_type_str}, defaulting to 'group'")
+                        chat_type = "group"
+            
+            # Сохранить сообщение с fallback и retry
+            from src.database.fallback import db_fallback
+            from src.utils.retry import retry_with_backoff, RetryConfig
+            
+            async def save_message():
+                return await db_fallback.save_message_with_fallback(
+                    message_id=message_id_str,
+                    chat_id=str(chat_id),
+                    author_id=str(author_id) if author_id else "unknown",
+                    author_name=author_username[:255] if author_username else None,
+                    text=message_text[:10000] if len(message_text) > 10000 else message_text,
+                    timestamp=message_date,
+                )
+            
+            try:
+                success = await retry_with_backoff(
+                    save_message,
+                    config=RetryConfig(max_retries=3, base_delay=1.0),
+                    operation_name=f"Saving message {message_id_str}"
+                )
+                if success:
+                    logger.debug(f"  ✓ Message saved to database: {message_id_str}")
+                else:
+                    logger.warning(f"  ⚠️  Failed to save message {message_id_str} after retries")
+            except Exception as e:
+                logger.error(f"  ❌ Error saving message {message_id_str} to database: {e}", exc_info=True)
             
             # Analyze message with regex analyzer (first level filter)
             logger.debug(f"  🔍 Analyzing message with regex analyzer (length: {len(message_text)} chars)")
@@ -195,58 +184,51 @@ class UserbotApp:
                 )
                 logger.debug(f"  Matched text: '{detection_result.matched_text}'")
                 
-                # Save order to database if DB is initialized
-                if self.db_initialized:
-                    try:
-                        # Use async generator properly
-                        async for session in db_manager.get_session():
-                            try:
-                                order_repo = OrderRepository(session)
-                                stat_repo = StatRepository(session)
-                                
-                                # Build telegram link
-                                telegram_link = None
-                                try:
-                                    if hasattr(message.chat, 'username') and message.chat.username:
-                                        telegram_link = f"https://t.me/{message.chat.username}/{message.id}"
-                                    elif message.chat.id < 0:
-                                        # For private groups/channels, format: https://t.me/c/CHAT_ID/MESSAGE_ID
-                                        chat_id_str = str(abs(message.chat.id))
-                                        # Remove first 4 digits for public link format
-                                        if len(chat_id_str) > 4:
-                                            telegram_link = f"https://t.me/c/{chat_id_str[4:]}/{message.id}"
-                                        else:
-                                            telegram_link = f"https://t.me/c/{chat_id_str}/{message.id}"
-                                except Exception as link_error:
-                                    logger.debug(f"Could not build telegram link: {link_error}")
-                                
-                                # Save order (метод create сам проверяет на дубликаты)
-                                saved_order = await order_repo.create(
-                                    message_id=str(message.id),
-                                    chat_id=str(chat_id),
-                                    author_id=str(author_id) if author_id else "unknown",
-                                    author_name=author_username[:255] if author_username else None,
-                                    text=message_text[:10000] if len(message_text) > 10000 else message_text,
-                                    category=detection_result.category.value,
-                                    relevance_score=detection_result.confidence,
-                                    detected_by=detection_result.detected_by.value,
-                                    telegram_link=telegram_link[:500] if telegram_link else None,
-                                )
-                                
-                                if saved_order:
-                                    # Update statistics только если заказ был создан (не дубликат)
-                                    await stat_repo.update_metrics(
-                                        detected_orders=1,
-                                        regex_detections=1,
-                                    )
-                                    logger.info(f"  ✓ Order saved to database")
-                                else:
-                                    logger.debug(f"  Order already exists for message_id: {message.id}, skipping duplicate")
-                            finally:
-                                # Session will be auto-committed/closed by generator
-                                break
-                    except Exception as e:
-                        logger.error(f"Error saving order to database: {e}", exc_info=True)
+                # Build telegram link
+                telegram_link = None
+                try:
+                    if hasattr(message.chat, 'username') and message.chat.username:
+                        telegram_link = f"https://t.me/{message.chat.username}/{message.id}"
+                    elif message.chat.id < 0:
+                        # For private groups/channels, format: https://t.me/c/CHAT_ID/MESSAGE_ID
+                        chat_id_str = str(abs(message.chat.id))
+                        # Remove first 4 digits for public link format
+                        if len(chat_id_str) > 4:
+                            telegram_link = f"https://t.me/c/{chat_id_str[4:]}/{message.id}"
+                        else:
+                            telegram_link = f"https://t.me/c/{chat_id_str}/{message.id}"
+                except Exception as link_error:
+                    logger.debug(f"Could not build telegram link: {link_error}")
+                
+                # Save order with fallback and retry mechanism
+                from src.database.fallback import db_fallback
+                from src.utils.retry import retry_with_backoff, RetryConfig
+                
+                async def save_order():
+                    return await db_fallback.save_order_with_fallback(
+                        message_id=str(message.id),
+                        chat_id=str(chat_id),
+                        author_id=str(author_id) if author_id else "unknown",
+                        author_name=author_username[:255] if author_username else None,
+                        text=message_text[:10000] if len(message_text) > 10000 else message_text,
+                        category=detection_result.category.value,
+                        relevance_score=detection_result.confidence,
+                        detected_by=detection_result.detected_by.value,
+                        telegram_link=telegram_link[:500] if telegram_link else None,
+                    )
+                
+                try:
+                    success = await retry_with_backoff(
+                        save_order,
+                        config=RetryConfig(max_retries=3, base_delay=1.0),
+                        operation_name=f"Saving order for message {message.id}"
+                    )
+                    if success:
+                        logger.info(f"  ✓ Order saved to database (Regex)")
+                    else:
+                        logger.warning(f"  ⚠️  Failed to save order for message {message.id} after retries")
+                except Exception as e:
+                    logger.error(f"  ❌ Error saving order for message {message.id} to database: {e}", exc_info=True)
             
             # Level 2: LLM analysis for ambiguous messages
             # Use LLM if regex didn't find anything OR found low-confidence match
@@ -283,56 +265,49 @@ class UserbotApp:
                             )
                             logger.debug(f"  LLM reason: {llm_result.reason}")
                             
-                            # Save order to database if DB is initialized
-                            if self.db_initialized:
-                                try:
-                                    async for session in db_manager.get_session():
-                                        try:
-                                            order_repo = OrderRepository(session)
-                                            stat_repo = StatRepository(session)
-                                            
-                                            # Build telegram link
-                                            telegram_link = None
-                                            try:
-                                                if hasattr(message.chat, 'username') and message.chat.username:
-                                                    telegram_link = f"https://t.me/{message.chat.username}/{message.id}"
-                                                elif message.chat.id < 0:
-                                                    chat_id_str = str(abs(message.chat.id))
-                                                    if len(chat_id_str) > 4:
-                                                        telegram_link = f"https://t.me/c/{chat_id_str[4:]}/{message.id}"
-                                                    else:
-                                                        telegram_link = f"https://t.me/c/{chat_id_str}/{message.id}"
-                                            except Exception as link_error:
-                                                logger.debug(f"Could not build telegram link: {link_error}")
-                                            
-                                            # Save order (метод create сам проверяет на дубликаты)
-                                            saved_order = await order_repo.create(
-                                                message_id=str(message.id),
-                                                chat_id=str(chat_id),
-                                                author_id=str(author_id) if author_id else "unknown",
-                                                author_name=author_username[:255] if author_username else None,
-                                                text=message_text[:10000] if len(message_text) > 10000 else message_text,
-                                                category=llm_result.category,
-                                                relevance_score=llm_result.relevance_score,
-                                                detected_by="llm",
-                                                telegram_link=telegram_link[:500] if telegram_link else None,
-                                            )
-                                            
-                                            if saved_order:
-                                                # Update statistics только если заказ был создан (не дубликат)
-                                                await stat_repo.update_metrics(
-                                                    detected_orders=1,
-                                                    llm_detections=1,
-                                                    llm_tokens_used=llm_result.tokens_used or 0,
-                                                    llm_cost=llm_result.cost_usd or 0.0,
-                                                )
-                                                logger.info(f"  ✓ Order saved to database (LLM)")
-                                            else:
-                                                logger.debug(f"  Order already exists for message_id: {message.id}, skipping duplicate (LLM)")
-                                        finally:
-                                            break
-                                except Exception as e:
-                                    logger.error(f"Error saving LLM order to database: {e}", exc_info=True)
+                            # Build telegram link for LLM-detected order
+                            telegram_link = None
+                            try:
+                                if hasattr(message.chat, 'username') and message.chat.username:
+                                    telegram_link = f"https://t.me/{message.chat.username}/{message.id}"
+                                elif message.chat.id < 0:
+                                    chat_id_str = str(abs(message.chat.id))
+                                    if len(chat_id_str) > 4:
+                                        telegram_link = f"https://t.me/c/{chat_id_str[4:]}/{message.id}"
+                                    else:
+                                        telegram_link = f"https://t.me/c/{chat_id_str}/{message.id}"
+                            except Exception as link_error:
+                                logger.debug(f"Could not build telegram link: {link_error}")
+                            
+                            # Save LLM-detected order with fallback and retry
+                            from src.database.fallback import db_fallback
+                            from src.utils.retry import retry_with_backoff, RetryConfig
+                            
+                            async def save_llm_order():
+                                return await db_fallback.save_order_with_fallback(
+                                    message_id=str(message.id),
+                                    chat_id=str(chat_id),
+                                    author_id=str(author_id) if author_id else "unknown",
+                                    author_name=author_username[:255] if author_username else None,
+                                    text=message_text[:10000] if len(message_text) > 10000 else message_text,
+                                    category=llm_result.category,
+                                    relevance_score=llm_result.relevance_score,
+                                    detected_by="llm",
+                                    telegram_link=telegram_link[:500] if telegram_link else None,
+                                )
+                            
+                            try:
+                                success = await retry_with_backoff(
+                                    save_llm_order,
+                                    config=RetryConfig(max_retries=3, base_delay=1.0),
+                                    operation_name=f"Saving LLM-detected order for message {message.id}"
+                                )
+                                if success:
+                                    logger.info(f"  ✓ Order saved to database (LLM): {message.id}")
+                                else:
+                                    logger.warning(f"  ⚠️  Failed to save LLM order for message {message.id} after retries")
+                            except Exception as e:
+                                logger.error(f"  ❌ Error saving LLM order for message {message.id} to database: {e}", exc_info=True)
                         else:
                             logger.debug(f"  LLM analysis: not an order (confidence: {llm_result.relevance_score if llm_result else 'N/A'})")
                     except Exception as e:
@@ -1083,6 +1058,61 @@ def test_connection():
             await db_manager.close()
     
     asyncio.run(_test_db_connection())
+
+
+@admin_app.command()
+def health_check():
+    """Проверить здоровье системы (БД, Telegram, LLM, Storage)."""
+    async def _health_check():
+        from src.monitoring.health_checker import health_checker
+        
+        try:
+            report = await health_checker.get_detailed_report()
+            print(report)
+        except Exception as e:
+            logger.error(f"Health check failed: {e}", exc_info=True)
+        finally:
+            await health_checker.close()
+    
+    asyncio.run(_health_check())
+
+
+@admin_app.command()
+def error_stats():
+    """Показать статистику ошибок."""
+    from src.monitoring.error_monitor import error_monitor
+    from rich.console import Console
+    from rich.table import Table
+    
+    stats = error_monitor.get_stats()
+    
+    console = Console()
+    table = Table(title="Error Statistics", show_header=True)
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="green")
+    
+    table.add_row("Total Errors", str(stats["total_errors"]))
+    table.add_row("Errors in Window", str(stats["errors_in_window"]))
+    table.add_row("Last Error Time", stats["last_error_time"] or "Never")
+    
+    if stats["errors_by_type"]:
+        table.add_row("", "")
+        table.add_row("[bold]Errors by Type[/bold]", "")
+        for error_type, count in stats["errors_by_type"].items():
+            table.add_row(f"  {error_type}", str(count))
+    
+    if stats["errors_by_component"]:
+        table.add_row("", "")
+        table.add_row("[bold]Errors by Component[/bold]", "")
+        for component, count in stats["errors_by_component"].items():
+            table.add_row(f"  {component}", str(count))
+    
+    console.print(table)
+    
+    if stats["recent_errors"]:
+        console.print("\n[bold]Recent Errors:[/bold]")
+        for error in stats["recent_errors"][:5]:
+            console.print(f"  [{error['timestamp']}] {error['type']} in {error['component']}")
 
 
 # ============================================================================

@@ -73,9 +73,10 @@ class ChatRepository:
     
     async def update_last_message_time(self, chat_id: str) -> None:
         """Обновить время последнего сообщения."""
+        from datetime import timezone
         chat = await self.get_by_id(chat_id)
         if chat:
-            chat.last_message_at = datetime.utcnow()
+            chat.last_message_at = datetime.now(timezone.utc)
             await self.session.flush()
 
 
@@ -186,6 +187,33 @@ class OrderRepository:
         detected_by: str,
         telegram_link: Optional[str] = None,
     ) -> Optional[Order]:
+        """
+        Создать новый заказ с валидацией данных.
+        
+        Returns:
+            Order если создан успешно, None если заказ уже существует (дубликат)
+        
+        Raises:
+            ValueError если данные невалидны (включая relevance_score вне диапазона 0-1)
+            IntegrityError если произошла другая ошибка целостности данных
+        """
+        # Валидация данных перед сохранением
+        from src.database.validator import validate_order_data
+        try:
+            validate_order_data({
+                "message_id": message_id,
+                "chat_id": chat_id,
+                "author_id": author_id,
+                "author_name": author_name,
+                "text": text,
+                "category": category,
+                "relevance_score": relevance_score,
+                "detected_by": detected_by,
+                "telegram_link": telegram_link,
+            })
+        except ValueError as e:
+            logger.error(f"Order validation failed: {e}")
+            raise
         """
         Создать новый обнаруженный заказ.
         

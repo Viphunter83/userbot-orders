@@ -1,6 +1,6 @@
 """SQLAlchemy ORM models for Supabase."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import (
     Column,
     Integer,
@@ -13,11 +13,17 @@ from sqlalchemy import (
     Index,
     UniqueConstraint,
     BigInteger,
+    CheckConstraint,
 )
 from sqlalchemy.orm import foreign
 from sqlalchemy.orm import relationship
 
 from src.database.base import Base
+
+
+def utcnow():
+    """Get current UTC datetime with timezone."""
+    return datetime.now(timezone.utc)
 
 
 class Chat(Base):
@@ -32,8 +38,8 @@ class Chat(Base):
     chat_name = Column(String(255), nullable=False)
     chat_type = Column(String(20), nullable=False)  # "group", "channel", "private"
     is_active = Column(Boolean, default=True, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    last_message_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    last_message_at = Column(DateTime(timezone=True), nullable=True)
     
     # Relationships
     messages = relationship("Message", back_populates="chat", cascade="all, delete-orphan")
@@ -60,9 +66,9 @@ class Message(Base):
     author_id = Column(String(50), nullable=False, index=True)
     author_name = Column(String(255), nullable=True)
     text = Column(Text, nullable=False)
-    timestamp = Column(DateTime, nullable=False, index=True)
+    timestamp = Column(DateTime(timezone=True), nullable=False, index=True)
     processed = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     
     # Relationships
     chat = relationship("Chat", back_populates="messages")
@@ -98,10 +104,14 @@ class Order(Base):
     author_name = Column(String(255), nullable=True)
     text = Column(Text, nullable=False)
     category = Column(String(50), nullable=False, index=True)  # Backend, Frontend, AI/ML, etc
-    relevance_score = Column(Float, nullable=False)  # 0.0-1.0
+    relevance_score = Column(
+        Float, 
+        CheckConstraint('relevance_score >= 0 AND relevance_score <= 1'),
+        nullable=False
+    )  # 0.0-1.0
     detected_by = Column(String(20), nullable=False)  # "regex", "llm", "manual"
     telegram_link = Column(String(500), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False, index=True)
     exported = Column(Boolean, default=False, nullable=False)
     feedback = Column(String(20), nullable=True)  # "good", "bad", "duplicate"
     notes = Column(Text, nullable=True)
@@ -142,8 +152,8 @@ class Stat(Base):
     llm_cost = Column(Float, default=0.0, nullable=False)  # USD
     avg_response_time_ms = Column(Integer, default=0, nullable=False)
     false_positive_count = Column(Integer, default=0, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
     
     def __repr__(self):
         return f"<Stat {self.date}>"
@@ -162,7 +172,7 @@ class ChatStat(Base):
     messages_count = Column(Integer, default=0, nullable=False)
     orders_count = Column(Integer, default=0, nullable=False)
     order_percentage = Column(Float, default=0.0, nullable=False)  # % orders из всех messages
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     
     __table_args__ = (
         UniqueConstraint("chat_id", "date", name="uq_chat_stats_date"),
@@ -184,7 +194,7 @@ class Feedback(Base):
     order_id = Column(Integer, ForeignKey("userbot_orders.id"), nullable=False, index=True)
     feedback_type = Column(String(20), nullable=False)  # "good", "bad", "duplicate", "not_an_order"
     reason = Column(String(500), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     
     __table_args__ = (
         Index("ix_feedback_order_type", "order_id", "feedback_type"),
