@@ -2,12 +2,10 @@
 
 import asyncio
 import logging
+import sys
 from typing import Optional, Callable, Awaitable
 from datetime import datetime, timedelta
 from collections import defaultdict
-from pyrogram import Client
-from pyrogram.types import Message
-from pyrogram.errors import AuthKeyUnregistered, SessionPasswordNeeded
 from loguru import logger
 
 from src.config.settings import get_settings
@@ -16,6 +14,87 @@ from src.utils.logger import setup_logger
 # Suppress Pyrogram warnings about unhandled updates
 import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*Task exception was never retrieved.*")
+
+# IMPORTANT: Install stderr interceptor BEFORE importing Pyrogram
+# to catch all socket errors from the start
+class SocketErrorSuppressor:
+    """Suppress socket.send() errors from Pyrogram's stderr output."""
+    
+    def __init__(self):
+        self._error_counts = defaultdict(int)
+        self._error_last_logged = defaultdict(lambda: datetime.min)
+        self._log_interval = timedelta(seconds=30)
+        self._original_stderr = sys.stderr
+    
+    def write(self, text):
+        """Intercept stderr writes and filter socket errors."""
+        # Skip empty lines
+        if not text or not text.strip():
+            return
+        
+        text_lower = text.lower()
+        
+        # Suppress socket.send() errors
+        if "socket.send()" in text or ("socket" in text_lower and "raised exception" in text_lower):
+            error_key = "socket_send_stderr"
+            now = datetime.now()
+            self._error_counts[error_key] += 1
+            
+            if (now - self._error_last_logged[error_key]) > self._log_interval:
+                count = self._error_counts[error_key]
+                logger.debug(f"Pyrogram socket error from stderr (occurred {count} times) - suppressing")
+                self._error_last_logged[error_key] = now
+                self._error_counts[error_key] = 0
+            # Suppress the output
+            return
+        
+        # Suppress "Connection lost" messages (but not full tracebacks)
+        if "Connection lost" in text and "Traceback" not in text:
+            error_key = "connection_lost_stderr"
+            now = datetime.now()
+            self._error_counts[error_key] += 1
+            
+            if (now - self._error_last_logged[error_key]) > self._log_interval:
+                count = self._error_counts[error_key]
+                logger.debug(f"Pyrogram connection lost from stderr (occurred {count} times) - suppressing")
+                self._error_last_logged[error_key] = now
+                self._error_counts[error_key] = 0
+            # Suppress the output
+            return
+        
+        # Suppress retry messages
+        if "[10] Retrying" in text and ("Connection lost" in text or "socket" in text_lower):
+            error_key = "retry_stderr"
+            now = datetime.now()
+            self._error_counts[error_key] += 1
+            
+            if (now - self._error_last_logged[error_key]) > self._log_interval:
+                count = self._error_counts[error_key]
+                logger.debug(f"Pyrogram retry messages from stderr (occurred {count} times) - suppressing")
+                self._error_last_logged[error_key] = now
+                self._error_counts[error_key] = 0
+            # Suppress the output
+            return
+        
+        # Write other messages to original stderr (including tracebacks for debugging)
+        self._original_stderr.write(text)
+        self._original_stderr.flush()
+    
+    def flush(self):
+        """Flush stderr."""
+        self._original_stderr.flush()
+
+# Install stderr interceptor BEFORE importing Pyrogram
+# Store original stderr before installing suppressor
+_original_stderr = sys.stderr
+if not isinstance(sys.stderr, SocketErrorSuppressor):
+    _stderr_suppressor = SocketErrorSuppressor()
+    sys.stderr = _stderr_suppressor
+
+# Now import Pyrogram (after stderr interceptor is installed)
+from pyrogram import Client
+from pyrogram.types import Message
+from pyrogram.errors import AuthKeyUnregistered, SessionPasswordNeeded
 
 # Configure Pyrogram's internal logging to suppress socket errors
 # Pyrogram uses standard Python logging, so we need to filter it
@@ -65,11 +144,19 @@ class SocketErrorFilter(logging.Filter):
         # Allow all other messages
         return True
 
-# Apply filter to Pyrogram's logger
+# Apply filter to Pyrogram's logger and all sub-loggers
 _pyrogram_logger = logging.getLogger("pyrogram")
 _pyrogram_logger.addFilter(SocketErrorFilter())
 # Set Pyrogram logger to WARNING level to reduce noise, but our filter will handle socket errors
 _pyrogram_logger.setLevel(logging.WARNING)
+
+# Also apply to all Pyrogram sub-loggers
+for logger_name in ["pyrogram.session", "pyrogram.connection", "pyrogram.transport", "pyrogram.dispatcher"]:
+    sub_logger = logging.getLogger(logger_name)
+    sub_logger.addFilter(SocketErrorFilter())
+    sub_logger.setLevel(logging.WARNING)
+
+# SocketErrorSuppressor уже установлен выше, перед импортом Pyrogram
 
 
 class TelegramClient:
@@ -266,6 +353,29 @@ class TelegramClient:
         async def message_handler(client: Client, message: Message):
             """Handle incoming messages."""
             try:
+                # Handle reply_to_message parsing errors gracefully
+                # Pyrogram may fail to fetch reply_to_message if connection is lost
+                try:
+                    # Access reply_to_message safely - don't force parsing if connection is lost
+                    if hasattr(message, 'reply_to_message') and message.reply_to_message:
+                        # Just check if it exists, don't force parsing
+                        pass
+                except (OSError, ConnectionError) as reply_error:
+                    # Suppress connection errors when parsing reply_to_message
+                    error_str = str(reply_error)
+                    if "Connection lost" in error_str or "socket" in error_str.lower():
+                        logger.debug(f"Skipping reply_to_message parsing due to connection issue")
+                        # Continue processing message without reply_to_message
+                    else:
+                        # Re-raise non-connection errors
+                        raise
+                except Exception as reply_error:
+                    # Suppress other errors during reply parsing (may be connection-related)
+                    error_str = str(reply_error)
+                    if "Connection lost" in error_str or "socket" in error_str.lower():
+                        logger.debug(f"Error parsing reply_to_message (connection issue, non-critical)")
+                    # Continue processing message
+                
                 # Get chat info first for logging
                 try:
                     chat_id = str(message.chat.id)
@@ -345,8 +455,20 @@ class TelegramClient:
             except KeyError as ke:
                 # Skip chats not found in storage
                 logger.debug(f"Skipping message from chat not in storage: {ke}")
+            except (OSError, ConnectionError) as conn_error:
+                # Suppress connection errors during message processing
+                error_str = str(conn_error)
+                if "Connection lost" in error_str or "socket" in error_str.lower():
+                    logger.debug(f"Skipping message processing due to connection issue: {error_str[:100]}")
+                else:
+                    logger.warning(f"Connection error in message handler: {conn_error}")
             except Exception as e:
-                logger.error(f"Error in message callback: {e}", exc_info=True)
+                # Check if it's a connection-related error from Pyrogram
+                error_str = str(e)
+                if "Connection lost" in error_str or ("socket" in error_str.lower() and "exception" in error_str.lower()):
+                    logger.debug(f"Skipping message due to connection issue: {error_str[:100]}")
+                else:
+                    logger.error(f"Error in message callback: {e}", exc_info=True)
         
         logger.info("✓ Message listener started. Waiting for messages...")
         
