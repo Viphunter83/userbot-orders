@@ -19,10 +19,10 @@ class TriggerPattern(TypedDict):
 
 BACKEND_PATTERNS: dict[str, TriggerPattern] = {
     "python_dev": {
-        "pattern": r"(?:ищу|ищем|нужен|требуется|в\s+поиск[еи]|в\s+поисках|на\s+проект\s+требуется|на\s+проект\s+компании\s+требуется)\s+(?:опытн[ый]*\s+)?(?:junior\s+)?(?:python|питон)[.-]?\s*(?:разработчик|программист|специалист|developer|engineer|спец)|(?:junior\s+)?(?:python|питон)[.-]?\s*(?:разработчик|программист)|на\s+проект\s+компании\s+требуется\s+python",
+        "pattern": r"(?:ищу|ищем|нужен|требуется|в\s+поиск[еи]|в\s+поисках|на\s+проект\s+требуется|на\s+проект\s+компании\s+требуется|looking\s+for|need|hiring|seeking|require|required)\s+(?:опытн[ый]*\s+)?(?:junior\s+)?(?:python|питон)[.-]?\s*(?:разработчик|программист|специалист|developer|engineer|спец|programmer|coder|specialist)|(?:junior\s+)?(?:python|питон)[.-]?\s*(?:разработчик|программист|developer|engineer)|на\s+проект\s+компании\s+требуется\s+python|(?:looking\s+for|need|hiring)\s+(?:junior\s+)?python\s+(?:developer|engineer|programmer)",
         "confidence": 0.95,
         "description": "Python разработчик (явное указание)"
-        # Examples: "Ищем Python-разработчика", "Junior Python-разработчик", "на проект компании требуется Python"
+        # Examples: "Ищем Python-разработчика", "Junior Python-разработчик", "Looking for Python developer", "Hiring Python engineer"
     },
     
     "junior_programmer": {
@@ -34,24 +34,24 @@ BACKEND_PATTERNS: dict[str, TriggerPattern] = {
     },
     
     "backend_dev": {
-        "pattern": r"(?:разработка\s+бэкенда|разработчик\s+на\s+бэк|специалист\s+на\s+python|бэкенд\s+разработчик|backend[-\s]?разработчик|backend[-\s]?developer)",
+        "pattern": r"(?:разработка\s+бэкенда|разработчик\s+на\s+бэк|специалист\s+на\s+python|бэкенд\s+разработчик|backend[-\s]?разработчик|backend[-\s]?developer|backend\s+development|backend\s+engineer|back[-\s]?end\s+(?:developer|engineer|programmer|specialist))",
         "confidence": 0.92,
         "description": "Backend разработка"
-        # Examples: "разработка бэкенда", "разработчик на бэк", "backend-разработчик"
+        # Examples: "разработка бэкенда", "разработчик на бэк", "backend-разработчик", "backend developer", "back-end engineer"
     },
     
     "junior_backend": {
-        "pattern": r"(?:junior\s+backend[-\s]?разработчик|junior\s+backend[-\s]?developer|junior\s+бэкенд[-\s]?разработчик)",
+        "pattern": r"(?:junior\s+backend[-\s]?разработчик|junior\s+backend[-\s]?developer|junior\s+бэкенд[-\s]?разработчик|junior\s+back[-\s]?end\s+(?:developer|engineer|programmer))",
         "confidence": 0.90,
         "description": "Junior Backend разработчик"
-        # Examples: "Junior backend-разработчик", "Junior backend developer"
+        # Examples: "Junior backend-разработчик", "Junior backend developer", "junior back-end engineer"
     },
     
     "fullstack_dev": {
-        "pattern": r"(?:в\s+поисках|ищем|нужен|требуется)\s+full[-\s]?stack\s+разработчик",
+        "pattern": r"(?:в\s+поисках|ищем|нужен|требуется|looking\s+for|need|hiring|seeking)\s+full[-\s]?stack\s+(?:разработчик|developer|engineer|programmer)",
         "confidence": 0.94,
         "description": "Full-stack разработчик"
-        # Examples: "в поисках Full-stack разработчика"
+        # Examples: "в поисках Full-stack разработчика", "looking for full-stack developer", "hiring fullstack engineer"
     },
     
     "webhook_setup": {
@@ -90,18 +90,18 @@ BACKEND_PATTERNS: dict[str, TriggerPattern] = {
     },
     
     "general_developer": {
-        "pattern": r"(?:ищу\s+разработчика|нужен\s+разработчик|требуется\s+разработчик)",
+        "pattern": r"(?:ищу\s+разработчика|нужен\s+разработчик|требуется\s+разработчик|looking\s+for\s+developer|need\s+developer|hiring\s+developer|seeking\s+developer)",
         "confidence": 0.80,
         "description": "Разработчик (общий запрос)"
-        # Examples: "ищу разработчика"
+        # Examples: "ищу разработчика", "looking for developer", "hiring developer"
         # Note: confidence 0.80 = порог, будет отправлено в LLM для уточнения
     },
     
     "nodejs_dev": {
-        "pattern": r"(?:нужен|ищ[уемся]*|требуется)\s+(?:node\.?js|javascript|js)[.-]?(?:разработчик|программист|engineer)",
+        "pattern": r"(?:нужен|ищ[уемся]*|требуется|looking\s+for|need|hiring|seeking)\s+(?:node\.?js|javascript|js|nodejs)[.-]?(?:разработчик|программист|engineer|developer|programmer|specialist)",
         "confidence": 0.94,
         "description": "Node.js / JavaScript разработчик"
-        # Examples: "нужен Node.js разработчик", "ищем javascript-специалиста"
+        # Examples: "нужен Node.js разработчик", "ищем javascript-специалиста", "looking for Node.js developer", "hiring JS engineer"
     },
     
     "api_backend": {
@@ -148,17 +148,17 @@ BACKEND_PATTERNS: dict[str, TriggerPattern] = {
     },
     
     "java_dev": {
-        "pattern": r"(?:нужен|ищ[уемся]*|требуется)\s+(?:java)\s*(?:разработчик|программист|developer|engineer)",
+        "pattern": r"(?:нужен|ищ[уемся]*|требуется|looking\s+for|need|hiring|seeking)\s+(?:java)\s*(?:разработчик|программист|developer|engineer|programmer|specialist)",
         "confidence": 0.93,
         "description": "Java разработчик"
-        # Examples: "нужен Java разработчик"
+        # Examples: "нужен Java разработчик", "looking for Java developer", "hiring Java engineer"
     },
     
     "go_dev": {
-        "pattern": r"(?:нужен|ищ[уемся]*|требуется)\s+(?:go|golang)[.-]?(?:разработчик|программист|developer)",
+        "pattern": r"(?:нужен|ищ[уемся]*|требуется|looking\s+for|need|hiring|seeking)\s+(?:go|golang)[.-]?(?:разработчик|программист|developer|engineer|programmer|specialist)",
         "confidence": 0.92,
         "description": "Go разработчик"
-        # Examples: "ищем Go-разработчика"
+        # Examples: "ищем Go-разработчика", "looking for Go developer", "hiring Golang engineer"
     },
 }
 
@@ -170,31 +170,31 @@ BACKEND_PATTERNS: dict[str, TriggerPattern] = {
 
 FRONTEND_PATTERNS: dict[str, TriggerPattern] = {
     "react_dev": {
-        "pattern": r"(?:(?:нужен|ищ[уемся]*|требуется)\s+)?(?:react|reactjs)[.-]?\s*(?:разработчик|программист|developer|engineer|specialist|специалист)",
+        "pattern": r"(?:(?:нужен|ищ[уемся]*|требуется|looking\s+for|need|hiring|seeking)\s+)?(?:react|reactjs|react\.js)[.-]?\s*(?:разработчик|программист|developer|engineer|specialist|специалист|programmer|coder)",
         "confidence": 0.95,
         "description": "React разработчик"
-        # Examples: "нужен React-разработчик", "ищем reactjs специалиста", "React специалист"
+        # Examples: "нужен React-разработчик", "ищем reactjs специалиста", "React специалист", "looking for React developer", "hiring React engineer"
     },
     
     "vue_dev": {
-        "pattern": r"(?:нужен|ищ[уемся]*|требуется)\s+(?:vue|vuejs|vue\.?js)\s*(?:разработчик|programmer|specialist|специалиста)",
+        "pattern": r"(?:нужен|ищ[уемся]*|требуется|looking\s+for|need|hiring|seeking)\s+(?:vue|vuejs|vue\.?js)\s*(?:разработчик|programmer|specialist|специалиста|developer|engineer)",
         "confidence": 0.94,
         "description": "Vue.js разработчик"
-        # Examples: "нужен Vue разработчик"
+        # Examples: "нужен Vue разработчик", "looking for Vue.js developer", "hiring Vue specialist"
     },
     
     "angular_dev": {
-        "pattern": r"(?:нужен|ищ[уемся]*|требуется)\s+(?:angular)[.-]?(?:разработчик|developer|specialist)",
+        "pattern": r"(?:нужен|ищ[уемся]*|требуется|looking\s+for|need|hiring|seeking)\s+(?:angular)[.-]?(?:разработчик|developer|specialist|engineer|programmer)",
         "confidence": 0.93,
         "description": "Angular разработчик"
-        # Examples: "ищем Angular специалиста"
+        # Examples: "ищем Angular специалиста", "looking for Angular developer", "hiring Angular engineer"
     },
     
     "frontend_dev": {
-        "pattern": r"(?:фронтенд|frontend)[.-]?(?:разработчик|programmer|developer|engineer)",
+        "pattern": r"(?:фронтенд|frontend|front[-\s]?end)[.-]?(?:разработчик|programmer|developer|engineer|specialist|специалист)",
         "confidence": 0.92,
         "description": "Frontend разработчик (общий)"
-        # Examples: "ищем frontend-разработчика", "нужен frontend специалист"
+        # Examples: "ищем frontend-разработчика", "нужен frontend специалист", "looking for frontend developer", "hiring front-end engineer"
     },
     
     "webflow_dev": {
@@ -248,31 +248,31 @@ FRONTEND_PATTERNS: dict[str, TriggerPattern] = {
 
 MOBILE_PATTERNS: dict[str, TriggerPattern] = {
     "flutter_dev": {
-        "pattern": r"(?:нужен|ищ[уемся]*|требуется|разработчик\s+для\s+создания).*?(?:flutter|flutter\s+dev).*?(?:разработчик|developer|programmer|specialist|приложения|app)",
+        "pattern": r"(?:нужен|ищ[уемся]*|требуется|разработчик\s+для\s+создания|looking\s+for|need|hiring|seeking|developer\s+for).*?(?:flutter|flutter\s+dev).*?(?:разработчик|developer|programmer|specialist|приложения|app|engineer)",
         "confidence": 0.95,
         "description": "Flutter разработчик"
-        # Examples: "нужен Flutter-разработчик", "разработчик для создания мобильного приложения на Flutter"
+        # Examples: "нужен Flutter-разработчик", "разработчик для создания мобильного приложения на Flutter", "looking for Flutter developer", "hiring Flutter engineer"
     },
     
     "react_native_dev": {
-        "pattern": r"(?:react\s*native|rn\s+dev).*?(?:разработчик|developer|специалиста)",
+        "pattern": r"(?:react\s*native|rn\s+dev|react\s*native\s+developer).*?(?:разработчик|developer|специалиста|engineer|programmer|specialist)",
         "confidence": 0.94,
         "description": "React Native разработчик"
-        # Examples: "ищем React Native специалиста"
+        # Examples: "ищем React Native специалиста", "looking for React Native developer", "hiring RN engineer"
     },
     
     "ios_dev": {
-        "pattern": r"(?:ios|swift|apple).*?(?:разработчик|developer|programmer)",
+        "pattern": r"(?:ios|swift|apple|ios\s+developer|swift\s+developer).*?(?:разработчик|developer|programmer|engineer|specialist|специалист)",
         "confidence": 0.93,
         "description": "iOS разработчик"
-        # Examples: "нужен iOS разработчик", "ищем Swift специалиста"
+        # Examples: "нужен iOS разработчик", "ищем Swift специалиста", "looking for iOS developer", "hiring Swift engineer"
     },
     
     "android_dev": {
-        "pattern": r"(?:android|kotlin).*?(?:разработчик|developer|programmer)",
+        "pattern": r"(?:android|kotlin|android\s+developer|kotlin\s+developer).*?(?:разработчик|developer|programmer|engineer|specialist|специалист)",
         "confidence": 0.93,
         "description": "Android разработчик"
-        # Examples: "нужен Android разработчик"
+        # Examples: "нужен Android разработчик", "looking for Android developer", "hiring Kotlin engineer"
     },
     
     "mobile_app": {
@@ -305,17 +305,17 @@ MOBILE_PATTERNS: dict[str, TriggerPattern] = {
 
 AI_ML_PATTERNS: dict[str, TriggerPattern] = {
     "ai_engineer": {
-        "pattern": r"(?:ищу|ищем|нужен|требуется|на\s+проект\s+требуется|порекомендуйте|в\s+поиск[еи]|в\s+поисках)\s+(?:ai|ии|искусственный\s+интеллект)[-\s]?(?:инженер|engineer|специалист|specialist)|консультант\s+по\s+ai|консультант\s+по\s+ии",
+        "pattern": r"(?:ищу|ищем|нужен|требуется|на\s+проект\s+требуется|порекомендуйте|в\s+поиск[еи]|в\s+поисках|looking\s+for|need|hiring|seeking)\s+(?:ai|ии|искусственный\s+интеллект|artificial\s+intelligence)[-\s]?(?:инженер|engineer|специалист|specialist|developer|consultant|консультант)|консультант\s+по\s+ai|консультант\s+по\s+ии|ai\s+consultant|ai\s+specialist",
         "confidence": 0.93,
         "description": "AI инженер / специалист / консультант"
-        # Examples: "ищу AI инженера", "нужен AI специалист", "консультант по AI"
+        # Examples: "ищу AI инженера", "нужен AI специалист", "консультант по AI", "looking for AI engineer", "hiring AI specialist"
     },
     
     "prompt_engineer": {
-        "pattern": r"(?:требуется|ищем|нужен|ищу|в\s+поиск[еи]|в\s+поисках)\s+(?:prompt\s+engineer|промпт[-\s]?инженер|промптовик|специалист\s+по\s+промпт|специалиста\s+по\s+промпт|ai\s+prompt|промпт[-\s]?специалист|промпт[-\s]?инженер)",
+        "pattern": r"(?:требуется|ищем|нужен|ищу|в\s+поиск[еи]|в\s+поисках|looking\s+for|need|hiring|seeking|required)\s+(?:prompt\s+engineer|промпт[-\s]?инженер|промптовик|специалист\s+по\s+промпт|специалиста\s+по\s+промпт|ai\s+prompt|промпт[-\s]?специалист|промпт[-\s]?инженер|prompt\s+specialist|prompt\s+developer)",
         "confidence": 0.92,
         "description": "Prompt Engineer / промпт-инженер"
-        # Examples: "Требуется Prompt Engineer", "Ищем промптовика", "В поиске специалиста по промпт"
+        # Examples: "Требуется Prompt Engineer", "Ищем промптовика", "В поиске специалиста по промпт", "looking for prompt engineer", "hiring prompt specialist"
     },
     
     "prompt_services": {
@@ -397,10 +397,10 @@ LOW_CODE_PATTERNS: dict[str, TriggerPattern] = {
     },
     
     "zapier_automation": {
-        "pattern": r"(?:проект\s+на\s+zapier|разработка\s+на\s+zapier|настройка\s+zapier\s+интеграции|zapier|make|n8n|zapier\s+интеграции)",
+        "pattern": r"(?:проект\s+на\s+zapier|разработка\s+на\s+zapier|настройка\s+zapier\s+интеграции|zapier|make|n8n|zapier\s+интеграции|looking\s+for\s+zapier|need\s+zapier|hiring\s+zapier|zapier\s+developer|zapier\s+specialist)",
         "confidence": 0.92,
         "description": "Zapier / Make / n8n автоматизация"
-        # Examples: "проект на Zapier", "настройка Zapier интеграции"
+        # Examples: "проект на Zapier", "настройка Zapier интеграции", "looking for Zapier developer", "hiring Zapier specialist"
     },
     
     "make_automation": {
@@ -447,10 +447,10 @@ OTHER_PATTERNS: dict[str, TriggerPattern] = {
     },
     
     "shopify_dev": {
-        "pattern": r"(?:нужен\s+специалист\s+shopify|нужен\s+специалист\s+shopify|ищу\s+разработчика\s+на\s+shopify|проект\s+на\s+shopify|разработка\s+на\s+shopify|shopify).*?(?:разработчик|developer|specialist|theme|plugin)?",
+        "pattern": r"(?:нужен\s+специалист\s+shopify|нужен\s+специалист\s+shopify|ищу\s+разработчика\s+на\s+shopify|проект\s+на\s+shopify|разработка\s+на\s+shopify|shopify|looking\s+for\s+shopify|need\s+shopify|hiring\s+shopify|shopify\s+developer|shopify\s+specialist).*?(?:разработчик|developer|specialist|theme|plugin|engineer)?",
         "confidence": 0.93,
         "description": "Shopify разработчик"
-        # Examples: "нужен специалист shopify", "проект на shopify"
+        # Examples: "нужен специалист shopify", "проект на shopify", "looking for Shopify developer", "hiring Shopify specialist"
     },
     
     "1c_dev_extended": {

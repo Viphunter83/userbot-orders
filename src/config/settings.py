@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     llm_base_url: str = Field(default="https://api.proxyapi.ru/openai/v1", description="LLM API base URL")
     
     # LLM Behavior
-    llm_temperature: float = Field(default=0.3, description="LLM temperature (0.0-1.0)")
+    llm_temperature: float = Field(default=0.6, description="LLM temperature (0.0-1.0), increased for better flexibility")
     llm_max_tokens: int = Field(default=512, description="Maximum tokens per request")
     llm_max_retries: int = Field(default=3, description="Maximum retry attempts")
     llm_timeout_seconds: int = Field(default=30, description="Request timeout in seconds")

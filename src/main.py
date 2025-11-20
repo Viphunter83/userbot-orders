@@ -145,7 +145,7 @@ class UserbotApp:
                     chat_id=str(chat_id),
                     author_id=str(author_id) if author_id else "unknown",
                     author_name=author_username[:255] if author_username else None,
-                    text=message_text[:10000] if len(message_text) > 10000 else message_text,
+                    text=message_text[:50000] if len(message_text) > 50000 else message_text,  # Увеличено до 50,000
                     timestamp=message_date,
                 )
             
@@ -210,7 +210,7 @@ class UserbotApp:
                         chat_id=str(chat_id),
                         author_id=str(author_id) if author_id else "unknown",
                         author_name=author_username[:255] if author_username else None,
-                        text=message_text[:10000] if len(message_text) > 10000 else message_text,
+                        text=message_text[:50000] if len(message_text) > 50000 else message_text,  # Увеличено до 50,000
                         category=detection_result.category.value,
                         relevance_score=detection_result.confidence,
                         detected_by=detection_result.detected_by.value,
@@ -289,7 +289,7 @@ class UserbotApp:
                                     chat_id=str(chat_id),
                                     author_id=str(author_id) if author_id else "unknown",
                                     author_name=author_username[:255] if author_username else None,
-                                    text=message_text[:10000] if len(message_text) > 10000 else message_text,
+                                    text=message_text[:50000] if len(message_text) > 50000 else message_text,  # Увеличено до 50,000
                                     category=llm_result.category,
                                     relevance_score=llm_result.relevance_score,
                                     detected_by="llm",

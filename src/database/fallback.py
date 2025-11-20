@@ -117,7 +117,7 @@ class DatabaseFallback:
                     "chat_id": chat_id,
                     "author_id": author_id,
                     "author_name": author_name[:255] if author_name else None,
-                    "text": text[:10000] if len(text) > 10000 else text,
+                    "text": text[:50000] if len(text) > 50000 else text,  # Увеличено до 50,000
                     "timestamp": timestamp.isoformat(),
                 }
             )
@@ -238,7 +238,7 @@ class DatabaseFallback:
                     "chat_id": chat_id,
                     "author_id": author_id,
                     "author_name": author_name[:255] if author_name else None,
-                    "text": text[:10000] if len(text) > 10000 else text,
+                    "text": text[:50000] if len(text) > 50000 else text,  # Увеличено до 50,000
                     "category": category,
                     "relevance_score": relevance_score,
                     "detected_by": detected_by,

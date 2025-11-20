@@ -12,7 +12,7 @@ class MessageData(BaseModel):
     chat_id: str = Field(..., min_length=1, max_length=50)
     author_id: str = Field(..., min_length=1, max_length=50)
     author_name: Optional[str] = Field(None, max_length=255)
-    text: str = Field(..., min_length=1, max_length=10000)
+    text: str = Field(..., min_length=1, max_length=50000)  # Увеличено до 50,000 для длинных сообщений
     timestamp: datetime
     
     @validator('text')
@@ -28,7 +28,7 @@ class OrderData(BaseModel):
     chat_id: str = Field(..., min_length=1, max_length=50)
     author_id: str = Field(..., min_length=1, max_length=50)
     author_name: Optional[str] = Field(None, max_length=255)
-    text: str = Field(..., min_length=1, max_length=10000)
+    text: str = Field(..., min_length=1, max_length=50000)  # Увеличено до 50,000 для длинных сообщений
     category: str = Field(..., min_length=1, max_length=50)
     relevance_score: float = Field(..., ge=0.0, le=1.0)
     detected_by: str = Field(..., min_length=1, max_length=20)
