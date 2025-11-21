@@ -83,6 +83,9 @@ class LLMClassifier:
         if not text or len(text.strip()) < 3:
             return None
         
+        # Нормализовать текст: убрать проблемные символы и исправить кодировку
+        text = self._normalize_text(text)
+        
         # Запустить очистку кеша если еще не запущена
         if self.cache and self._cleanup_task is None:
             try:
@@ -155,8 +158,8 @@ class LLMClassifier:
         if not texts:
             return []
         
-        # Фильтровать пустые тексты
-        valid_texts = [t for t in texts if t and len(t.strip()) >= 3]
+        # Нормализовать и фильтровать пустые тексты
+        valid_texts = [self._normalize_text(t) for t in texts if t and len(t.strip()) >= 3]
         if not valid_texts:
             return [None] * len(texts)
         
@@ -372,16 +375,24 @@ class LLMClassifier:
         Raises:
             Exception если запрос неудачен
         """
+        # Нормализовать содержимое сообщений перед отправкой
+        normalized_messages = []
+        for msg in messages:
+            normalized_msg = msg.copy()
+            if 'content' in normalized_msg and normalized_msg['content']:
+                normalized_msg['content'] = self._normalize_text(normalized_msg['content'])
+            normalized_messages.append(normalized_msg)
+        
         payload = {
             "model": self.model,
-            "messages": messages,
+            "messages": normalized_messages,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
         }
         
         headers = {
             "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
+            "Content-Type": "application/json; charset=utf-8",
         }
         
         start_time = time.time()
@@ -401,7 +412,10 @@ class LLMClassifier:
                 
                 # Извлечь текст из ответа
                 if "choices" in data and len(data["choices"]) > 0:
-                    response_text = data["choices"][0].get("message", {}).get("content", "")
+                    response_text_raw = data["choices"][0].get("message", {}).get("content", "")
+                    
+                    # Нормализовать ответ от LLM
+                    response_text = self._normalize_text(response_text_raw) if response_text_raw else ""
                     
                     # Обновить метрики
                     if "usage" in data:
@@ -438,6 +452,52 @@ class LLMClassifier:
     # ========================================================================
     # УТИЛИТЫ
     # ========================================================================
+    
+    def _normalize_text(self, text: str) -> str:
+        """
+        Нормализовать текст перед отправкой в LLM.
+        Убирает проблемные символы и исправляет кодировку.
+        
+        Args:
+            text: Исходный текст
+        
+        Returns:
+            Нормализованный текст
+        """
+        if not text:
+            return ""
+        
+        try:
+            # Убедиться что текст в UTF-8
+            if isinstance(text, bytes):
+                # Попробовать декодировать как UTF-8
+                try:
+                    text = text.decode('utf-8')
+                except UnicodeDecodeError:
+                    # Если не получается, попробовать другие кодировки
+                    try:
+                        text = text.decode('utf-16-le', errors='ignore')
+                    except (UnicodeDecodeError, UnicodeError):
+                        # В крайнем случае использовать errors='replace'
+                        text = text.decode('utf-8', errors='replace')
+            
+            # Убрать нулевые байты и другие проблемные символы
+            text = text.replace('\x00', '')
+            text = text.replace('\ufffd', '')  # Replacement character
+            
+            # Нормализовать пробелы
+            import re
+            text = re.sub(r'\s+', ' ', text)
+            text = text.strip()
+            
+            return text
+        
+        except Exception as e:
+            logger.warning(f"Error normalizing text: {e}, using original text")
+            # В случае ошибки вернуть оригинальный текст, но попробовать исправить кодировку
+            if isinstance(text, str):
+                return text.encode('utf-8', errors='ignore').decode('utf-8', errors='ignore')
+            return str(text) if text else ""
     
     def get_metrics(self) -> dict:
         """

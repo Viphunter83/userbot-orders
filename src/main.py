@@ -71,7 +71,23 @@ class UserbotApp:
         """
         try:
             # Extract message information
-            message_text = message.text or message.caption or ""
+            message_text_raw = message.text or message.caption or ""
+            
+            # Нормализовать текст: убрать проблемные символы и исправить кодировку
+            try:
+                # Убедиться что текст в UTF-8
+                if isinstance(message_text_raw, bytes):
+                    message_text = message_text_raw.decode('utf-8', errors='replace')
+                else:
+                    message_text = str(message_text_raw)
+                
+                # Убрать нулевые байты и другие проблемные символы
+                message_text = message_text.replace('\x00', '')
+                message_text = message_text.replace('\ufffd', '')  # Replacement character
+                
+            except Exception as e:
+                logger.warning(f"Error normalizing message text: {e}, using original")
+                message_text = str(message_text_raw) if message_text_raw else ""
             
             # Если сообщение пустое, пропустить (но логировать для отладки)
             if not message_text or len(message_text.strip()) < 1:
